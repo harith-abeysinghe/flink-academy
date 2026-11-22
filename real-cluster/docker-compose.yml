@@ -1,0 +1,51 @@
+# Flink Academy - real Flink cluster for hands-on exercises
+# Flink 1.20 = newest 1.x line, supported by Beam's beam-runners-flink-1.20 (Beam >= 2.70)
+# Usage:  docker compose up -d    ->  http://localhost:8081
+x-flink-props: &flink-props
+  FLINK_PROPERTIES: |
+    jobmanager.rpc.address: jobmanager
+    taskmanager.numberOfTaskSlots: 2
+    parallelism.default: 2
+    rest.flamegraph.enabled: true
+    state.backend.type: hashmap
+    state.checkpoints.dir: file:///tmp/flink-checkpoints
+    state.savepoints.dir: file:///tmp/flink-savepoints
+    execution.checkpointing.interval: 10s
+    restart-strategy.type: fixed-delay
+    restart-strategy.fixed-delay.attempts: 3
+    restart-strategy.fixed-delay.delay: 10s
+
+services:
+  jobmanager:
+    image: flink:1.20-java17
+    container_name: flink-jobmanager
+    command: jobmanager
+    ports:
+      - "8081:8081"
+    environment:
+      <<: *flink-props
+    volumes:
+      - flink-state:/tmp
+
+  taskmanager-1:
+    image: flink:1.20-java17
+    container_name: flink-taskmanager-1
+    command: taskmanager
+    depends_on: [jobmanager]
+    environment:
+      <<: *flink-props
+    volumes:
+      - flink-state:/tmp
+
+  taskmanager-2:
+    image: flink:1.20-java17
+    container_name: flink-taskmanager-2
+    command: taskmanager
+    depends_on: [jobmanager]
+    environment:
+      <<: *flink-props
+    volumes:
+      - flink-state:/tmp
+
+volumes:
+  flink-state:
