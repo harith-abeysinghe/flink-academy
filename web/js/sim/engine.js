@@ -94,8 +94,9 @@
       if (r.edge.strat !== 'FORWARD') why.push(`the exchange is ${r.edge.strat}, not FORWARD`);
       if (prev.p !== r.p) why.push(`parallelism differs (${prev.p} → ${r.p})`);
       if (prev.group !== r.group) why.push(`different slot sharing groups ("${prev.group}" vs "${r.group}")`);
-      if (prev.chain === 'disable' || r.chain === 'disable') why.push('disableChaining() was called');
-      if (r.chain === 'startNew') why.push('startNewChain() was called');
+      if (prev.chain === 'disable') why.push(`disableChaining() was called on "${prev.name}"`);
+      if (r.chain === 'disable') why.push(`disableChaining() was called on "${r.name}"`);
+      if (r.chain === 'startNew') why.push(`startNewChain() was called on "${r.name}"`);
       r.chainBreak = why;
     });
 

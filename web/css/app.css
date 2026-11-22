@@ -174,3 +174,17 @@ table.t th{color:var(--muted);font-weight:600}
 .dg-cap{flex:1;font-size:14px;line-height:1.55;min-height:66px}
 .dg-cap .n{display:inline-block;color:var(--muted);font-size:12px;margin-right:8px;font-variant-numeric:tabular-nums}
 @media (max-width:640px){.dg-foot{flex-direction:column;gap:8px}}
+
+/* Chain explanation under embedded job graphs */
+.chainwhy{margin-top:10px;font-size:13px;line-height:1.5}
+.chainwhy .cw-head{color:var(--text)}
+.chainwhy .cw-list{list-style:none;padding:0;margin:8px 0 4px}
+.chainwhy .cw-box{background:#121a2a;border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-family:"Cascadia Code",Consolas,monospace;font-size:12.5px}
+.chainwhy .cw-n{display:inline-block;min-width:52px;color:#8db8ff;font-family:"Segoe UI",system-ui,sans-serif;font-weight:600;font-size:12px}
+.chainwhy .cw-cut{padding:4px 0 4px 14px;color:#ffd08a;border-left:2px dashed var(--warn);margin:3px 0 3px 18px}
+.chainwhy .cw-x{color:var(--warn);font-weight:700}
+.chainwhy .cw-foot{font-size:12px}
+.callout.live{margin-top:12px;font-size:13.5px;line-height:1.55}
+.callout.live div+div{margin-top:4px}
+.callout.live > div b{display:inline;margin:0}
+.lesson-wrap>*{min-width:0}

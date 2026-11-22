@@ -4,6 +4,10 @@
   const h = FA.h;
   const KEYCOL = { A: '#ff7a8a', B: '#6cc3ff', C: '#ffd666', D: '#95de64', E: '#d3adf7', F: '#ffa940' };
 
+  /* Live "What's happening" panel shared by the lesson widgets */
+  const explain = (lines, tone) => h('div', { class: 'callout live ' + (tone || '') }, h('b', null, "What's happening"), lines.filter(Boolean).map(l => h('div', { html: l })));
+  const pct = x => Math.round(x * 100) + '%';
+
   function seeded(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
 
   /* ===== 1. Ordering across multiple workers ===== */
@@ -142,6 +146,14 @@
         tbl.appendChild(h('tr', null, h('td', null, h('code', null, k)), h('td', null, kg), h('td', null, `#${sub + 1}`)));
       });
       out.appendChild(tbl);
+      const ex = keysIn.value.split(',').map(x => x.trim()).filter(Boolean)[0];
+      if (ex) {
+        const kg = FA.keyGroupOf(ex, maxP), raw = kg * p / maxP, sub = Math.floor(raw);
+        out.appendChild(explain([
+          `Follow <code>${FA.esc(ex)}</code>: Flink hashes it into <b>key group ${kg}</b> (murmurHash(hashCode) % ${maxP}). That number never changes while max parallelism stays ${maxP}.`,
+          `The owner is subtask = floor(${kg} × ${p} / ${maxP}) = floor(${raw.toFixed(2)}) = ${sub}, shown as <b>#${sub + 1}</b> (counting from 1).`,
+          `Change <b>Parallelism</b>: key group ${kg} stays the same and only its owner changes. That is how state moves when you rescale. Change <b>Max parallelism</b>: every key gets a different key group, which is why existing state becomes incompatible.`]));
+      }
       const ranges = h('div', { style: { display: 'flex', height: '26px', borderRadius: '6px', overflow: 'hidden', marginTop: '10px', border: '1px solid var(--line)' } });
       const cols = ['#5b8ff9', '#5ad8a6', '#f6bd16', '#e8684a', '#6dc8ec', '#9270ca', '#ff9d4d', '#269a99'];
       const lines = [];
@@ -167,23 +179,29 @@
     el.append(h('div', { class: 'row' }, h('label', { class: 'f' }, h('span', null, 'forBoundedOutOfOrderness = ', lbl), ooo), h('label', { class: 'f' }, h('span', null, 'allowedLateness = ', lbl2), lateIn)), out);
     function run() {
       const b = +ooo.value, al = +lateIn.value; lbl.textContent = b + ' s'; lbl2.textContent = al + ' s';
-      let maxTs = -Infinity, wm = -Infinity; const fired = {}; const purged = {}; const counts = {};
+      let maxTs = -Infinity, wm = -Infinity; const fired = {}; const purged = {}; const counts = {}; const dropped = [], refired = [], fireOrder = [];
       const tbl = h('table', { class: 't' }, h('tr', null, ['#', 'Event', 'Event time', 'Window', 'Watermark after', 'What happens'].map(x => h('th', null, x))));
       arrivals.forEach(([ts, id], i) => {
         const w = Math.floor(ts / 5) * 5, wEnd = w + 5;
         let action;
-        if (purged[w]) action = h('span', { class: 'pill bad' }, 'LATE → dropped (or side output)');
-        else if (fired[w]) { counts[w] = (counts[w] || 0) + 1; action = h('span', { class: 'pill warn' }, `late but within allowedLateness → window [${w},${wEnd}) fires AGAIN (count=${counts[w]})`); }
+        if (purged[w]) { dropped.push(id); action = h('span', { class: 'pill bad' }, 'LATE → dropped (or side output)'); }
+        else if (fired[w]) { refired.push(id); counts[w] = (counts[w] || 0) + 1; action = h('span', { class: 'pill warn' }, `late but within allowedLateness → window [${w},${wEnd}) fires AGAIN (count=${counts[w]})`); }
         else { counts[w] = (counts[w] || 0) + 1; action = h('span', { class: 'pill' }, `added to [${w},${wEnd})`); }
         maxTs = Math.max(maxTs, ts); wm = maxTs - b - 0.001;
         const fires = [];
         Object.keys(counts).map(Number).sort((a, c) => a - c).forEach(ws => {
-          if (!fired[ws] && wm >= ws + 5 - 0.001) { fired[ws] = true; fires.push(`🔔 window [${ws},${ws + 5}) FIRES (count=${counts[ws]})`); }
+          if (!fired[ws] && wm >= ws + 5 - 0.001) { fired[ws] = true; fireOrder.push(`[${ws},${ws + 5}) after event ${id}`); fires.push(`🔔 window [${ws},${ws + 5}) FIRES (count=${counts[ws]})`); }
           if (fired[ws] && !purged[ws] && wm >= ws + 5 - 0.001 + al) purged[ws] = true;
         });
         tbl.appendChild(h('tr', null, h('td', null, i + 1), h('td', null, id), h('td', null, ts.toFixed(1) + ' s'), h('td', null, `[${w},${wEnd})`), h('td', null, wm.toFixed(3) + ' s'), h('td', null, action, fires.length ? h('div', { style: { color: 'var(--ok)', marginTop: '3px' } }, fires.join(' · ')) : null)));
       });
       out.innerHTML = '';
+      out.appendChild(explain([
+        `Events arrive out of order (look at the Event time column). The watermark always trails the newest event time by <b>${b} s</b>: Flink waits that long for stragglers before it closes a window.`,
+        fireOrder.length ? `Windows fired: ${fireOrder.join(', ')}. The rest are still open because the watermark has not passed their end yet.` : 'No window has fired yet: the watermark never passed the end of a window.',
+        dropped.length ? `❌ <b>${dropped.length} event(s) dropped</b> (${dropped.join(', ')}): they arrived after their window had fired${al ? ' and after the allowed lateness' : ''}. Raise the out-of-orderness bound${al ? '' : ' or the allowed lateness'} to keep them.` : '✅ No event was dropped with these settings.',
+        refired.length ? `🔁 ${refired.length} late event(s) (${refired.join(', ')}) still counted because of allowedLateness: their window fired <b>again</b> with an updated count.` : null,
+        `Trade-off: a bigger bound loses fewer events, but each window's result comes out later (${b ? 'here ' + b + ' s after the window ends' : 'here right away, at the cost of more late events'}). Compare 0 s with 4 s.`], dropped.length ? 'warn' : 'tip'));
       out.append(tbl, h('div', { class: 'muted', style: { fontSize: '12.5px', marginTop: '6px' } }, 'Watermark = max event time seen − out-of-orderness − 1 ms. A window [start, end) fires when watermark ≥ end − 1 ms. Bigger bounds give fewer late events but more latency. Try 0 s versus 4 s.'));
     }
     ooo.addEventListener('input', run); lateIn.addEventListener('input', run); run();
@@ -244,6 +262,7 @@
   };
   FA.registerWidget('memory', function (el) {
     const o = { process: 1728, managedFrac: 0.4, netFrac: 0.1, netMin: 64, netMax: 1024, metaspace: 256, ohFrac: 0.1, ohMin: 192, ohMax: 1024, fwHeap: 128, fwOff: 128, taskOff: 0 };
+    const DEF = FA.tmMemory(Object.assign({}, o));
     el.appendChild(h('div', { class: 'wtitle' }, 'TaskManager memory calculator (Flink unified memory model, default values)'));
     const ctrls = h('div', { class: 'row' }); const out = h('div', { style: { marginTop: '12px' } });
     el.append(ctrls, out);
@@ -265,9 +284,64 @@
         ['→ JVM -Xmx / -Xms', m.heap, 'framework heap + task heap'], ['→ -XX:MaxDirectMemorySize', m.direct, 'framework off-heap + task off-heap + network']];
       rows.forEach(r => tbl.appendChild(h('tr', null, h('td', null, r[0]), h('td', null, typeof r[1] === 'number' ? r[1].toFixed(0) : r[1]), h('td', { class: 'muted' }, r[2]))));
       out.appendChild(tbl);
+      const names = [['taskHeap', 'Task heap (your objects, HashMap state)'], ['managed', 'Managed (RocksDB, batch)'], ['network', 'Network buffers'], ['overhead', 'JVM overhead'], ['metaspace', 'Metaspace'], ['taskOff', 'Task off-heap']];
+      const diffs = names.filter(([k]) => Math.round(m[k]) !== Math.round(DEF[k])).map(([k, n]) => `${n}: ${Math.round(DEF[k])} → <b>${Math.round(m[k])} MB</b> (${m[k] > DEF[k] ? '+' : ''}${Math.round(m[k] - DEF[k])})`);
+      out.appendChild(explain(diffs.length ? [
+        'Compared with a default TaskManager (1728 MB):', ...diffs.map(d => '• ' + d),
+        'Overhead, network and managed memory are <b>fractions</b>, so they move with the total. Metaspace and the framework parts are fixed sizes. <b>Task heap gets whatever is left</b>, so it is the part that grows or shrinks the most.'] : [
+        `These are the defaults: of ${o.process} MB, only <b>${Math.round(m.taskHeap)} MB</b> is task heap for your own objects. Managed memory (${Math.round(m.managed)} MB) is the biggest part, and only RocksDB and batch operators use it.`,
+        'Try: raise process.size to 4096, or set managed.fraction to 0.1 (a job using the HashMap state backend), and watch the task heap.']));
     }
     run();
   });
+
+  /* Explains the boxes: which operators share a task, and the exact rule that cut each chain. */
+  function explainChains(box, res) {
+    box.innerHTML = '';
+    if (res.errors.length) return;
+    const V = res.vertices, n = res.real.length;
+    const head = V.length === 1
+      ? `Why 1 box? All ${n} operators are chained into one task: every edge is FORWARD, the parallelism is the same, they share a slot sharing group and chaining is on. One thread per subtask runs them back-to-back, passing records by method call.`
+      : `Why ${V.length} boxes? Each box is one task (one chain of operators, one thread per subtask). A new box starts wherever one of the chaining rules fails:`;
+    box.appendChild(h('div', { class: 'cw-head' }, head));
+    if (V.length === 1) return;
+    const ol = h('ol', { class: 'cw-list' });
+    V.forEach((v, i) => {
+      if (i > 0) {
+        const first = v.ops[0];
+        ol.appendChild(h('li', { class: 'cw-cut' }, h('span', { class: 'cw-x' }, '✂'), ' cut before ', h('b', null, first.name), ': ' + first.chainBreak.join('; ') + '.'));
+      }
+      ol.appendChild(h('li', { class: 'cw-box' }, h('span', { class: 'cw-n' }, 'Box ' + (i + 1)), v.ops.map(o => o.name).join(' → '),
+        h('span', { class: 'muted' }, ` · parallelism ${v.p}`)));
+    });
+    box.appendChild(ol);
+    box.appendChild(h('div', { class: 'cw-foot muted' }, 'Every cut costs serialization, a network buffer and a thread handover per record.'));
+  }
+  /* Explains the throughput: who is busy, who is backpressured, and why. */
+  function explainFlow(box, res) {
+    box.innerHTML = '';
+    if (res.errors.length) return;
+    const V = res.vertices, short = v => FA.esc(FA.SimView.shortName(v.name));
+    if (!res.limited) {
+      const busiest = V.reduce((a, b) => b.busyMax > a.busyMax ? b : a);
+      box.appendChild(explain([
+        `✅ Every box keeps up: the job processes all ${FA.fmt(res.sourceRate)} rec/s the source produces, so nothing is backpressured (no black boxes).`,
+        `The busiest box is <b>${short(busiest)}</b> at ${pct(busiest.busyMax)} busy. A box at 100% is the limit of the job.`], 'tip'));
+      return;
+    }
+    const b = V[res.bottleneck], subs = b.sub.map(x => x.busy), avg = subs.reduce((a, c) => a + c, 0) / subs.length;
+    const skew = b.p > 1 && Math.max(...subs) > 1.5 * avg;
+    const cpu = res.cpuDemand.some(d => d > res.cl.coresPerTm);
+    const before = V.slice(0, res.bottleneck).map(short);
+    const need = Math.ceil(b.p * res.sourceRate / res.throughput);
+    box.appendChild(explain([
+      `⚠️ <b>${short(b)}</b> is the bottleneck (red, ${pct(b.busyMax)} busy). It can only handle about <b>${FA.fmt(res.throughput)} rec/s</b>, but the source produces ${FA.fmt(res.sourceRate)} rec/s.`,
+      before.length ? `Its input buffers fill up, so the boxes before it (${before.join(', ')}) cannot send and turn black: <b>backpressured</b>. They are victims, not the cause.` : null,
+      `The source reads slower than data arrives, so Kafka consumer lag grows by about ${FA.fmt(res.lagGrowth)} records every second.`,
+      skew ? `One subtask of ${short(b)} is far busier than the others: a <b>hot key</b>. More parallelism will not split one key; pre-aggregate or salt the key.`
+        : cpu ? 'The TaskManagers have more busy threads than CPU cores, so tasks also slow each other down. Add cores or TaskManagers, or use fewer slots per TaskManager.'
+        : `Fix: give ${short(b)} more parallelism (about ${need} subtasks would keep up) or make each record cheaper (batching, async I/O).`], 'warn'));
+  }
 
   /* ===== 6. Mini job graph (embedded lab) ===== */
   FA.registerWidget('jobgraph', function (el, cfg) {
@@ -278,11 +352,14 @@
     const ctr = h('div', { class: 'row', style: { marginBottom: '8px' } });
     const g = h('div', { class: 'graph-wrap' });
     const note = h('div', { class: 'muted', style: { fontSize: '12.5px', marginTop: '6px' } });
-    el.append(ctr, g, note);
+    const why = h('div', { class: 'chainwhy' }), flow = h('div');
+    el.append(ctr, g, note, why, flow);
     function draw() {
       const res = FA.Sim.compile(model);
       FA.SimView.renderGraph(g, res, { animate: true });
       note.textContent = res.errors.length ? '⚠️ ' + res.errors[0] : `${res.vertices.length} task(s) · slots needed: ${res.slotsRequired} · throughput ${FA.fmt(res.throughput)} rec/s of ${FA.fmt(res.sourceRate)}${res.limited ? ' (backpressured!)' : ''}`;
+      explainChains(why, res);
+      explainFlow(flow, res);
     }
     (cfg.controls || []).forEach(c => {
       const target = c.op === 'cluster' ? model.cluster : model.ops[c.op];
@@ -312,6 +389,19 @@
         { kind: 'source', p: st.pSrc, name: 'Kafka', cost: 2, sel: 1 }, { kind: 'map', p: st.pMap, name: 'Map', cost: 3, sel: 1, part: 'auto' },
         { kind: 'keyby', name: 'keyBy', skew: 0 }, { kind: 'window', p: st.pWin, name: 'Window', cost: 5, sel: 0.1, group: st.isolate ? 'windows' : '' }, { kind: 'sink', p: st.pSink, name: 'Sink', cost: 2, sel: 0, part: 'auto', group: '' }] });
       FA.SimView.renderSlots(out, res);
+      const byGroup = {};
+      res.vertices.forEach(v => { (byGroup[v.group] = byGroup[v.group] || []).push(v); });
+      const lines = Object.entries(byGroup).map(([g, vs]) => {
+        const top = vs.reduce((a, b) => b.p > a.p ? b : a);
+        return `Slot sharing group <b>"${g}"</b>: ${vs.map(v => `${FA.esc(FA.SimView.shortName(v.name))} (${v.p})`).join(', ')}. The highest parallelism is ${top.p}, so this group needs <b>${top.p} slot(s)</b>.`;
+      });
+      if (Object.keys(byGroup).length > 1) lines.push(`Groups never share slots, so the job needs ${Object.values(byGroup).map(vs => Math.max(...vs.map(v => v.p))).join(' + ')} = <b>${res.slotsRequired} slots</b>.`);
+      const s0 = res.slots[0];
+      if (s0) lines.push(`Look at Slot 1: it runs ${s0.tasks.map(t => FA.esc(FA.SimView.shortName(res.vertices[t.v].name)) + ' ' + (t.s + 1) + '/' + res.vertices[t.v].p).join(', ')}. That is one subtask of every task in its group: a whole slice of the pipeline.`);
+      lines.push(res.slotsRequired <= res.slotsAvailable
+        ? `The cluster offers ${st.tms} × ${st.slots} = ${res.slotsAvailable} slots, so the job <b>fits</b>${res.slotsAvailable > res.slotsRequired ? ` (${res.slotsAvailable - res.slotsRequired} slot(s) stay free)` : ''}.`
+        : `The cluster offers only ${st.tms} × ${st.slots} = ${res.slotsAvailable} slots. The job would wait for ${res.slotsRequired - res.slotsAvailable} more slot(s), then fail with <code>NoResourceAvailableException</code>. Add TaskManagers or slots, or lower the highest parallelism.`);
+      out.insertBefore(explain(lines, res.slotsRequired <= res.slotsAvailable ? 'tip' : 'warn'), out.firstChild);
     }
     run();
   });
@@ -319,9 +409,10 @@
   /* ===== 8. Partitioner picture ===== */
   FA.registerWidget('partitioners', function (el) {
     el.appendChild(h('div', { class: 'wtitle' }, 'Which upstream subtask talks to which downstream subtask?'));
-    const sel = h('select', null, ['FORWARD', 'REBALANCE', 'RESCALE', 'HASH', 'BROADCAST', 'GLOBAL', 'SHUFFLE'].map(x => h('option', null, x)));
+    const sel = h('select', null, ['FORWARD', 'REBALANCE', 'RESCALE', 'HASH', 'BROADCAST', 'GLOBAL', 'SHUFFLE'].map(x => h('option', { selected: x === 'HASH' }, x)));
     const upI = h('input', { type: 'number', value: 2, min: 1, max: 6 }), dnI = h('input', { type: 'number', value: 4, min: 1, max: 6 });
     const box = h('div'), txt = h('div', { class: 'callout' });
+    let live = h('div');
     el.append(h('div', { class: 'row' }, h('label', { class: 'f' }, 'Ship strategy', sel), h('label', { class: 'f' }, 'Upstream p', upI), h('label', { class: 'f' }, 'Downstream p', dnI)), box, txt);
     const DESC = {
       FORWARD: 'One-to-one: subtask i → subtask i. Needs equal parallelism. Order is fully preserved, no repartitioning, and it is the ONLY strategy that allows chaining. Default when parallelism is equal and you did not ask for anything else.',
@@ -353,6 +444,14 @@
       for (let d = 0; d < dn; d++) node(460, pos(dn, d), `downstream #${d + 1}`);
       box.innerHTML = ''; box.appendChild(svg);
       txt.innerHTML = (s === 'FORWARD' && up !== dn ? '<b>⚠️ Invalid:</b> FORWARD needs equal parallelism.<br>' : '') + `<b>${s}</b> · ${edges.length} channel(s). ${DESC[s]}`;
+      const PER = { FORWARD: 'the downstream subtask with the same number', REBALANCE: 'the next downstream subtask in round-robin order', RESCALE: 'the next subtask in its own local group, round-robin', HASH: "the one downstream subtask that owns the record's key group", BROADCAST: '<b>every</b> downstream subtask (one copy each)', GLOBAL: 'downstream #1, always', SHUFFLE: 'a random downstream subtask' };
+      const links = [...Array(up).keys()].map(u => { const t = edges.filter(e => e[0] === u).map(e => '#' + (e[1] + 1)); return `upstream #${u + 1} → ${t.length ? t.join(', ') : 'nothing'}`; });
+      if (live.parentNode) live.remove();
+      live = explain(s === 'FORWARD' && up !== dn ? ['FORWARD only works when both sides have the same parallelism, so no channels can be drawn. Set both to the same number, or pick REBALANCE.'] : [
+        `Channels (who can talk to whom): ${links.join(' · ')}.`,
+        `Each single record goes to ${PER[s]}.`,
+        edges.length === up * dn && up * dn > 1 && s !== 'BROADCAST' ? `All-to-all: ${up} × ${dn} = ${edges.length} channels, each needing its own network buffers. That is why very high parallelism needs more network memory.` : null]);
+      el.appendChild(live);
     }
     [sel, upI, dnI].forEach(x => x.addEventListener('input', run)); run();
   });
