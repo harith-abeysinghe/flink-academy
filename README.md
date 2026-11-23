@@ -8,7 +8,7 @@ A local study tool for Apache Flink (and Apache Beam on Flink). It has 15 levels
 * **Any OS:** `python main.py`
 * **No Python?** Open `web/index.html` directly. Everything works, but progress is saved only in that browser.
 
-The server only needs the Python standard library (no pip installs). Progress is saved to `data/progress.json`, and resetting from the app keeps a `.bak.json` backup.
+The server needs Python 3.6 or newer and only the standard library (no pip installs). Progress is saved to `data/progress.json`, and resetting from the app keeps a `.bak.json` backup.
 
 ## Settings
 

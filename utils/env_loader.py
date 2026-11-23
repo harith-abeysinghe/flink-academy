@@ -1,7 +1,5 @@
 """Minimal .env loader (stdlib only, so the tool runs with zero pip installs)."""
 
-from __future__ import annotations
-
 import os
 from pathlib import Path
 

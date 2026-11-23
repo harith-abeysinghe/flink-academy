@@ -1,7 +1,5 @@
 """Flink Academy entry point: wires settings, persistence and the HTTP server together."""
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 

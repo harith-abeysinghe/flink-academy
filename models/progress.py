@@ -1,20 +1,17 @@
 """Progress document model. The browser owns the schema; the server validates the envelope only."""
 
-from __future__ import annotations
-
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, ClassVar
+from typing import Any, Dict, Optional
 
 
-@dataclass
 class ProgressDocument:
-    data: dict[str, Any] = field(default_factory=dict)
-    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    MAX_BYTES: int = 1_000_000
 
-    MAX_BYTES: ClassVar[int] = 1_000_000
+    def __init__(self, data: Optional[Dict[str, Any]] = None, updated_at: Optional[str] = None) -> None:
+        self.data: Dict[str, Any] = data if data is not None else {}
+        self.updated_at: str = updated_at or datetime.now(timezone.utc).isoformat()
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         return {"data": self.data, "updatedAt": self.updated_at}
 
     @classmethod
