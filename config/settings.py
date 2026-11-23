@@ -1,16 +1,15 @@
 """Typed application settings, sourced from .env / environment variables."""
 
-from __future__ import annotations
-
 import os
-from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple, Optional
 
 from utils.env_loader import EnvLoader
 
 
-@dataclass(frozen=True)
-class Settings:
+class Settings(NamedTuple):
+    """Immutable settings (NamedTuple instead of a frozen dataclass so it runs on Python 3.6)."""
+
     host: str
     port: int
     open_browser: bool
@@ -48,7 +47,7 @@ class SettingsFactory:
         )
 
     @staticmethod
-    def _parse_int(value: str | None, default: int) -> int:
+    def _parse_int(value: Optional[str], default: int) -> int:
         try:
             return int(value) if value else default
         except ValueError:

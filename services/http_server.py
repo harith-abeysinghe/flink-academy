@@ -1,22 +1,31 @@
 """Static file server + tiny JSON API for progress persistence."""
 
-from __future__ import annotations
-
 import json
-from functools import partial
+import os
+import posixpath
+import urllib.parse
 from http import HTTPStatus
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+from socketserver import ThreadingMixIn
+from typing import Any, Dict
 
 from config.settings import Settings
 from models.progress import ProgressDocument
 from services.progress_repository import ProgressRepository
 
 
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    """Same as http.server.ThreadingHTTPServer, which only exists on Python 3.7+."""
+
+    daemon_threads = True
+
+
 class AcademyRequestHandler(SimpleHTTPRequestHandler):
     """Serves /web and handles /api/progress (GET, PUT) and /api/reset (POST)."""
 
-    repository: ProgressRepository  # injected via subclassing in AcademyServer
+    # Both injected via subclassing in AcademyServer.
+    repository: ProgressRepository
+    web_root: str
 
     extensions_map = {
         **SimpleHTTPRequestHandler.extensions_map,
@@ -30,6 +39,27 @@ class AcademyRequestHandler(SimpleHTTPRequestHandler):
         if args and isinstance(args[0], str) and args[0].startswith(("GET /api", "PUT /api", "POST /api")):
             return
         super().log_message(format, *args)
+
+    def translate_path(self, path: str) -> str:
+        """Map a URL path to a file under web_root.
+
+        Python 3.7+ can do this with SimpleHTTPRequestHandler(directory=...), but 3.6 always serves
+        the current working directory, so this mirrors the stdlib logic with web_root as the base.
+        """
+        path = path.split("?", 1)[0].split("#", 1)[0]
+        trailing_slash: bool = path.rstrip().endswith("/")
+        try:
+            path = urllib.parse.unquote(path, errors="surrogatepass")
+        except UnicodeDecodeError:
+            path = urllib.parse.unquote(path)
+        result: str = self.web_root
+        for word in posixpath.normpath(path).split("/"):
+            if not word or os.path.dirname(word) or word in (os.curdir, os.pardir):
+                continue
+            result = os.path.join(result, word)
+        if trailing_slash:
+            result += "/"
+        return result
 
     def end_headers(self) -> None:
         self.send_header("Cache-Control", "no-store")
@@ -73,7 +103,7 @@ class AcademyRequestHandler(SimpleHTTPRequestHandler):
         except json.JSONDecodeError as exc:
             raise ValueError(f"Invalid JSON: {exc.msg}") from exc
 
-    def _send_json(self, status: HTTPStatus, body: dict[str, Any]) -> None:
+    def _send_json(self, status: HTTPStatus, body: Dict[str, Any]) -> None:
         encoded: bytes = json.dumps(body).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -85,9 +115,12 @@ class AcademyRequestHandler(SimpleHTTPRequestHandler):
 class AcademyServer:
     def __init__(self, settings: Settings, repository: ProgressRepository) -> None:
         self._settings: Settings = settings
-        handler_cls = type("BoundAcademyHandler", (AcademyRequestHandler,), {"repository": repository})
-        handler = partial(handler_cls, directory=str(settings.web_root))
-        self._httpd: ThreadingHTTPServer = ThreadingHTTPServer((settings.host, settings.port), handler)
+        handler_cls = type(
+            "BoundAcademyHandler",
+            (AcademyRequestHandler,),
+            {"repository": repository, "web_root": str(settings.web_root)},
+        )
+        self._httpd: ThreadingHTTPServer = ThreadingHTTPServer((settings.host, settings.port), handler_cls)
 
     def serve_forever(self) -> None:
         self._httpd.serve_forever()

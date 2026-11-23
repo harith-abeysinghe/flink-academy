@@ -1,7 +1,5 @@
 """Opens the default browser shortly after the server starts."""
 
-from __future__ import annotations
-
 import threading
 import webbrowser
 

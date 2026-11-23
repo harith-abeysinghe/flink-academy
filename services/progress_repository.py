@@ -1,10 +1,9 @@
 """Thread-safe JSON file persistence for learner progress."""
 
-from __future__ import annotations
-
 import json
 import threading
 from pathlib import Path
+from typing import Optional
 
 from models.progress import ProgressDocument
 
@@ -15,7 +14,7 @@ class ProgressRepository:
         self._lock: threading.Lock = threading.Lock()
         self._file_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def load(self) -> ProgressDocument | None:
+    def load(self) -> Optional[ProgressDocument]:
         with self._lock:
             if not self._file_path.is_file():
                 return None
