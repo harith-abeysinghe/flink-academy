@@ -105,6 +105,190 @@
     }
   });
 
+  /* L7: one state field, a different value per key (Flink sets the current key) */
+  D('current-key', {
+    title: 'One state field, one value per key: Flink picks the row', h: 300,
+    build(S) {
+      lane(S, 20, 20, 'INCOMING RECORDS');
+      S.arrow(20, 80, 188, 80);
+      S.box(190, 30, 340, 104, 'Your Dedup function (one object for all keys)', { corner: true });
+      const code = [
+        S.text(206, 64, 'if (seen.value() == null) {', { anchor: 'start', mono: true, size: 12 }),
+        S.text(206, 86, '  seen.update(true); out.collect(e);', { anchor: 'start', mono: true, size: 12 }),
+        S.text(206, 108, '} // else: drop the duplicate', { anchor: 'start', mono: true, size: 12 })
+      ];
+      const hi = (t, on) => t.setAttribute('fill', on ? C.warn : '#e6ebf5');
+      const ck = S.text(360, 151, 'current key: (none)', { tone: 'purple', weight: 700, size: 12.5 });
+      S.box(190, 166, 340, 124, 'Keyed state "seen" (Flink keeps one row per key)', { corner: true, tone: 'muted' });
+      const ROW = { A: 206, B: 234, C: 262 };
+      const hl = S.rect(206, ROW.A - 12, 308, 24, { tone: 'purple', rx: 6, hidden: true });
+      const row = {
+        A: S.text(226, ROW.A, 'key A → true', { anchor: 'start', mono: true, size: 12.5 }),
+        B: S.text(226, ROW.B, 'key B → (empty)', { anchor: 'start', mono: true, size: 12.5 }),
+        C: S.text(226, ROW.C, 'key C → (empty)', { anchor: 'start', mono: true, size: 12.5 })
+      };
+      const outB = S.box(610, 40, 170, 56, 'forwarded', { tone: 'ok', sub: 'out.collect(e)' });
+      const dropB = S.box(610, 200, 170, 56, 'dropped', { tone: 'bad', sub: 'duplicate' });
+      S.arrow(530, 70, 608, 68); S.arrow(530, 110, 608, 222);
+      let tk;
+      const arrive = (A, k) => A.fly(k, [30, 80], [168, 80], { tone: 'warn', keep: true, ms: 800 });
+      const leave = async (A, box) => { await A.move(tk, box.cx, box.cy, 700); await A.hide(tk); S.remove(tk); await A.blink(box, 1); };
+      return [
+        { cap: 'One subtask handles <b>many keys</b>, but your function has only <b>one</b> <code>seen</code> field. Behind that field, Flink keeps a table with a separate value for every key.' },
+        { cap: 'A record with key <b>B</b> arrives. Before it calls <code>processElement</code>, Flink sets the <b>current key</b> to B, so every state call now points at row B.',
+          run: async A => { tk = await arrive(A, 'B'); A.text(ck, 'current key: B'); hl.setAttribute('y', ROW.B - 12); await A.show(hl); } },
+        { cap: '<code>seen.value()</code> reads row B: it is empty (null), so this is the first B. <code>seen.update(true)</code> writes to <b>row B only</b>, and the record is forwarded.',
+          run: async A => {
+            hi(code[0], 1); await A.fly('null', [470, ROW.B], [470, 64], { tone: 'muted', ms: 700 });
+            hi(code[0], 0); hi(code[1], 1);
+            await A.fly('true', [470, 86], [470, ROW.B], { tone: 'ok', ms: 700 });
+            A.text(row.B, 'key B → true'); row.B.setAttribute('fill', C.ok);
+            await leave(A, outB); hi(code[1], 0);
+          } },
+        { cap: 'Next comes a record with key <b>A</b>. Flink switches the current key to A, so the <b>same line of code</b> now reads row A.',
+          run: async A => { tk = await arrive(A, 'A'); A.text(ck, 'current key: A'); await A.to(hl, { y: ROW.A - 12 }, 450); } },
+        { cap: '<code>seen.value()</code> returns <b>true</b> for A, because an earlier A already set it. The record is a duplicate and is dropped. Rows B and C were not touched.',
+          run: async A => {
+            hi(code[0], 1); await A.fly('true', [470, ROW.A], [470, 64], { tone: 'ok', ms: 700 });
+            hi(code[0], 0); hi(code[2], 1); await leave(A, dropB);
+          } },
+        { cap: 'Takeaway: you never pass the key yourself, and you cannot read another key\'s state from here. State calls always go to the key of the record (or timer) being processed.' }
+      ];
+    }
+  });
+
+  /* L7: the five keyed state types fed the same events */
+  D('keyed-state-types', {
+    title: 'Five keyed state types, fed the same three events', h: 350,
+    build(S) {
+      S.text(20, 28, 'events for key "user-7":', { anchor: 'start', size: 12, fill: '#93a0bb', weight: 600 });
+      const EV = ['tea 5', 'cake 3', 'tea 4'];
+      const chips = EV.map((e, i) => S.token(232 + i * 72, 28, e, { tone: 'muted' }));
+      const TYPES = [
+        ['ValueState<Integer>', 'update(price)', 'last write wins', ['5', '3', '4']],
+        ['ListState<Order>', 'add(order)', 'grows until cleared', ['[tea 5]', '[tea 5, cake 3]', '[tea 5, cake 3, tea 4]']],
+        ['MapState<String, Integer>', 'put(item, price)', 'get/put one entry', ['{tea=5}', '{tea=5, cake=3}', '{tea=4, cake=3}']],
+        ['ReducingState<Integer>', 'add(price), reduce = sum', 'merged on every add', ['5', '8', '12']],
+        ['AggregatingState<Integer, Double>', 'add(price), aggregate = avg', 'accumulator ≠ result', ['acc{sum 5, n 1} → 5.0', 'acc{sum 8, n 2} → 4.0', 'acc{sum 12, n 3} → 4.0']]
+      ];
+      const rows = TYPES.map((t, i) => {
+        const y = 52 + i * 54;
+        S.box(20, y, 258, 44, t[0], { sub: t[1], size: 12.5, subMono: true });
+        const r = S.box(290, y, 292, 44, '(empty)', { tone: 'muted', mono: true, size: 12, weight: 500 });
+        S.text(596, y + 22, t[2], { anchor: 'start', size: 11.5, fill: '#93a0bb' });
+        return r;
+      });
+      const note = S.text(400, 336, 'Every row is per key: a record for "user-8" starts again from (empty) in all five.', { tone: 'ok', weight: 700, size: 12.5, hidden: true });
+      const feed = async (A, i) => {
+        S.tone(chips[i], 'warn');
+        await A.stagger(rows, (r, j) => A.fly('', [chips[i]._tx, 40], [r.bx + 18, r.cy], { r: 6, tone: 'warn', ms: 650 })
+          .then(() => { S.tone(r, 'info'); S.label(r, TYPES[j][3][i]); }), 90);
+        S.tone(chips[i], 'ok');
+      };
+      return [
+        { cap: 'Each type is a different <b>shape</b> of per-key memory. Watch what each one holds after the same three events for key user-7 (an item and a price).' },
+        { cap: 'Event <code>tea 5</code>: every type now holds something for user-7.', run: A => feed(A, 0) },
+        { cap: 'Event <code>cake 3</code>: ValueState is overwritten, ListState appends, MapState adds a <code>cake</code> entry, ReducingState sums to 8, and AggregatingState updates its (sum, count) accumulator.', run: A => feed(A, 1) },
+        { cap: 'Event <code>tea 4</code>: ValueState keeps only the last price, and MapState <b>overwrites</b> its <code>tea</code> entry. The others keep accumulating.',
+          run: async A => { await feed(A, 2); S.tone(rows[0], 'warn'); S.tone(rows[2], 'warn'); } },
+        { cap: 'All five are scoped to the <b>current key</b>. Reducing and Aggregating state keep only the running result, not the events, so they stay small. ListState keeps every event, so clear it or use TTL.',
+          run: async A => { S.tone(rows[0], 'info'); S.tone(rows[2], 'info'); await A.show(note); } }
+      ];
+    }
+  });
+
+  /* L7: operator state redistribution on rescale */
+  D('operator-state-rescale', {
+    title: 'Operator state on rescale: even-split vs union', h: 300,
+    build(S) {
+      lane(S, 30, 16, 'BEFORE: PARALLELISM 2 (each source instance keeps its own list of partition offsets)');
+      const old = [S.box(30, 26, 360, 70, 'source[0]', { corner: true }), S.box(410, 26, 360, 70, 'source[1]', { corner: true })];
+      const P = [['p0', 41], ['p1', 17], ['p2', 90], ['p3', 5], ['p4', 63], ['p5', 28]];
+      const chips = P.map(([p, o], i) => S.token(old[i < 3 ? 0 : 1].bx + 80 + (i % 3) * 105, 68, `${p} @${o}`, { tone: 'purple' }));
+      const l2 = lane(S, 30, 134, 'AFTER: PARALLELISM 3, restored from a savepoint'); l2.setAttribute('opacity', 0);
+      const nw = [0, 1, 2].map(j => S.box(30 + j * 252, 144, 236, 76, 'source[' + j + ']', { corner: true, hidden: true }));
+      const mode = S.text(400, 246, '', { weight: 700, size: 13.5, tone: 'warn' });
+      const note = S.text(400, 270, '', { size: 12, fill: '#93a0bb' });
+      return [
+        { cap: 'Two source instances. Each keeps <b>its own list</b> of (partition, offset) pairs, e.g. p0 has been read up to offset 41. No key is involved: this is <b>operator state</b>, owned by the parallel instance.' },
+        { cap: 'Rescale to 3 with <b>even-split</b> (the default, <code>getListState</code>): Flink joins all the lists and deals them out in equal pieces, so each new instance gets 2 partitions.',
+          run: async A => {
+            await A.show(l2, ...nw);
+            A.text(mode, 'EVEN-SPLIT'); A.text(note, 'all lists are joined, then cut into equal pieces: 2 entries per instance');
+            chips.forEach(c => c.parentNode.appendChild(c));
+            await A.all(chips.map((c, i) => A.wait(i * 100).then(() => A.move(c, nw[i >> 1].bx + 62 + (i % 2) * 112, 190, 900))));
+            await A.all(old.map(o => A.fade(o, 0.35)));
+          } },
+        { cap: 'With <b>union</b> (<code>getUnionListState</code>), every new instance receives <b>the whole list</b> and then keeps only the entries it is responsible for. It is used when an instance must see everything to decide, as the legacy Kafka consumer did.',
+          run: async A => {
+            await A.hide(...chips);
+            A.text(mode, 'UNION'); A.text(note, 'every instance receives the full list, then keeps only what it needs');
+            const small = [];
+            nw.forEach((b, j) => P.forEach(([p], i) => small.push({ j, i, t: S.token(b.bx + 30 + i * 35, 190, p, { tone: 'purple', hidden: true }) })));
+            await A.stagger(nw, (b, j) => A.show(small.filter(s => s.j === j).map(s => s.t)), 250);
+            await A.wait(400);
+            await A.all(small.filter(s => s.i % 3 !== s.j).map(s => A.fade(s.t, 0.18)));
+          } },
+        { cap: 'Compare with keyed state: there, whole <b>key groups</b> move and each key stays with its own state. Operator state has no keys, so on rescale Flink can only <b>split</b> the lists or <b>copy</b> them to everyone.' }
+      ];
+    }
+  });
+
+  /* L7: HashMap vs RocksDB backend */
+  D('state-backends', {
+    title: 'Where state lives: HashMap vs RocksDB', h: 330,
+    build(S) {
+      S.box(20, 16, 370, 196, 'HashMapStateBackend', { corner: true });
+      S.box(410, 16, 370, 196, 'EmbeddedRocksDBStateBackend', { corner: true });
+      const fnL = S.box(36, 42, 338, 42, 'your function', { sub: 'state.value()', subMono: true });
+      const fnR = S.box(426, 42, 338, 42, 'your function', { sub: 'state.value()', subMono: true });
+      const heap = S.box(36, 98, 338, 100, 'TaskManager JVM heap: live Java objects', { corner: true, tone: 'info' });
+      S.box(426, 98, 150, 100, 'managed memory', { corner: true, tone: 'purple' });
+      S.text(501, 150, 'block cache\n+ write buffers', { size: 11, fill: '#93a0bb' });
+      const disk = S.box(586, 98, 178, 100, 'local disk (SST files)', { corner: true, tone: 'purple' });
+      const OBJ = ['A=3', 'B=1', 'C=7', 'D=2'], SST = ['sst-1', 'sst-2', 'sst-3'];
+      const objs = OBJ.map((o, i) => S.token(90 + i * 62, 145, o, { tone: 'info', hidden: i === 3 }));
+      const ssts = SST.map((o, i) => S.token(630 + i * 52, 145, o, { tone: 'purple', hidden: i === 2 }));
+      const heapSt = S.text(205, 182, '', { size: 11.5, fill: '#93a0bb' });
+      const diskSt = S.text(675, 182, '', { size: 11, fill: '#93a0bb' });
+      S.box(20, 232, 760, 88, 'checkpoint storage (S3 / HDFS / GCS)', { corner: true, tone: 'muted' });
+      const ck = [[205, 266], [205, 292], [595, 266], [595, 292]].map(([x, y]) => S.text(x, y, '', { size: 12, mono: true, fill: '#e6ebf5' }));
+      const up = (A, list, labels, tone, to) => A.stagger(list, (c, i) => A.fly(labels[i], [c._tx, c._ty], to, { tone, ms: 800 }), 150);
+      return [
+        { cap: 'Both backends keep the <b>working copy</b> of keyed state on the TaskManager. The difference is the <b>form</b>: live Java objects on the heap, or serialized bytes in RocksDB.' },
+        { cap: 'Reading <code>state.value()</code>: HashMap hands back the object directly. RocksDB finds the <b>bytes</b> (in its cache, or on disk) and <b>deserializes</b> them on every access, which is slower.',
+          run: async A => {
+            await A.all(
+              A.fly('A=3', [90, 145], [205, 63], { tone: 'info', ms: 500 }).then(() => S.sub(fnL, 'got A=3: object reference, no copy')),
+              (async () => {
+                await A.fly('A', [630, 145], [501, 150], { shape: 'sq', tone: 'purple', ms: 700 });
+                await A.fly('A', [501, 150], [595, 63], { shape: 'sq', tone: 'purple', ms: 600 });
+                S.sub(fnR, 'bytes → deserialize → A=3');
+              })());
+          } },
+        { cap: 'Checkpoint 1: HashMap writes a <b>full snapshot</b> of all its state. RocksDB uploads its SST files.',
+          run: async A => {
+            await A.all(
+              up(A, objs.slice(0, 3), OBJ, 'info', [205, 266]).then(() => A.text(ck[0], 'chk-1: full copy (3 entries)')),
+              up(A, ssts.slice(0, 2), SST, 'purple', [595, 266]).then(() => A.text(ck[2], 'chk-1: sst-1, sst-2')));
+          } },
+        { cap: 'New data arrives (D=2, a new sst-3). Checkpoint 2: HashMap copies <b>everything again</b>. RocksDB uploads <b>only the new file</b> and reuses sst-1 and sst-2: an <b>incremental</b> checkpoint.',
+          run: async A => {
+            await A.all(A.show(objs[3]), A.show(ssts[2]));
+            await A.all(
+              up(A, objs, OBJ, 'info', [205, 292]).then(() => A.text(ck[1], 'chk-2: full copy again (4)')),
+              up(A, [ssts[2]], ['sst-3'], 'purple', [595, 292]).then(() => A.text(ck[3], 'chk-2: only sst-3 (incremental)')));
+          } },
+        { cap: 'As state grows, HashMap hits the heap limit: long GC pauses, then OutOfMemoryError. RocksDB keeps hot data in managed memory and the rest on disk, so state can be far larger than RAM. Small state and lowest latency → HashMap. Large state → RocksDB.',
+          run: async A => {
+            S.tone(heap, 'bad'); A.text(heapSt, 'state > heap: long GC pauses, then OutOfMemoryError'); heapSt.setAttribute('fill', '#ffd6d6');
+            S.tone(disk, 'ok'); A.text(diskSt, 'disk holds far more than RAM'); diskSt.setAttribute('fill', '#d2f5e4');
+            await A.all(A.blink(heap, 2), A.blink(disk, 2));
+          } }
+      ];
+    }
+  });
+
   /* L7 + L13: key groups and rescaling */
   D('keygroup-rescale', {
     title: 'Key groups: the unit that moves when you rescale', h: 272,
