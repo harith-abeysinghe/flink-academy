@@ -58,7 +58,7 @@ subtask  = keyGroup * parallelism / maxParallelism</code></pre>
 ${FA.D('keygroup-rescale')}
 ${FA.W('keygroups', {})}
 <ul>
-<li>Default max parallelism ≈ <code>roundUpToPowerOfTwo(1.5 × parallelism)</code>, minimum 128, maximum 32768.</li>
+<li>Default max parallelism = <code>roundUpToPowerOfTwo(p + p / 2)</code> (integer division, so about 1.5 × parallelism), then clamped to at least 128 and at most 32768.</li>
 <li>If max parallelism is not a multiple of parallelism, some subtasks own one more key group, which is mild built-in skew. Example: maxP 128, p 96 → 32 subtasks get 2 key groups and 64 get 1.</li>
 <li><b>Set max parallelism explicitly before the first production deployment</b> and never change it afterwards. A different value is incompatible with existing state.</li>
 </ul>` },

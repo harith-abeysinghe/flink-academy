@@ -4,7 +4,7 @@ FA.CONFIG = [
   // ---- Cluster & parallelism
   { k: 'taskmanager.numberOfTaskSlots', d: '1', c: 'Cluster & parallelism', t: 'Slots per TaskManager. Cluster capacity = TMs × slots. Rule of thumb: about 1 slot per CPU core; slots do NOT isolate CPU, only managed memory.' },
   { k: 'parallelism.default', d: '1', c: 'Cluster & parallelism', t: 'Parallelism used when neither the operator nor the job sets one. With Beam, --parallelism overrides it for the job.' },
-  { k: 'pipeline.max-parallelism', d: '-1 (auto: roundUpToPowerOfTwo(1.5×p), min 128, max 32768)', c: 'Cluster & parallelism', t: 'Number of key groups for keyed state = upper limit for rescaling. Set it EXPLICITLY before the first production deploy. Changing it later breaks state restore.' },
+  { k: 'pipeline.max-parallelism', d: '-1 (auto: roundUpToPowerOfTwo(p + p/2), min 128, max 32768)', c: 'Cluster & parallelism', t: 'Number of key groups for keyed state = upper limit for rescaling. Set it EXPLICITLY before the first production deploy. Changing it later breaks state restore.' },
   { k: 'jobmanager.scheduler', d: 'default', c: 'Cluster & parallelism', t: '"adaptive" enables the Adaptive Scheduler (rescales to available slots; used by reactive mode and autoscaling).' },
   { k: 'slot.request.timeout', d: '300000 ms (5 min)', c: 'Cluster & parallelism', t: 'How long the scheduler waits for slots before failing with NoResourceAvailableException.' },
   { k: 'taskmanager.load-balance.mode', d: 'NONE', c: 'Cluster & parallelism', t: 'Flink 1.20+: SLOTS spreads slots evenly across TaskManagers (replaces the older cluster.evenly-spread-out-slots: true). Helps avoid one hot TM.' },
