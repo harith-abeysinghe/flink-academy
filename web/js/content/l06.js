@@ -32,7 +32,7 @@ ${FA.W('ordering', { strat: 'hash', up: 2, down: 2, pinned: false })}
 <li><b>Kafka → keyBy on the same key</b>: if the producer partitioned the topic by that key, each key comes from one Kafka partition → one source subtask → one channel, so <b>per-key order is preserved</b>. If the producer used round-robin, or you keyed by a different field, order is not guaranteed.</li>
 <li><b>A rebalance() before keyBy destroys per-key order</b>, because records of one key are now emitted by several subtasks.</li>
 <li><b>Changing parallelism</b> between source and keyed operator inserts a REBALANCE if you did not keyBy, so watch out in long pipelines.</li>
-<li><b>Event time fixes most ordering problems</b>: instead of relying on arrival order, use event-time timestamps, watermarks, windows or timers (Level 8) and sort/buffer in state when the business logic needs strict order.</li>
+<li><b>Event time fixes most ordering problems</b>: instead of relying on arrival order, use event-time timestamps, watermarks, windows or timers (Levels 8 and 9) and sort/buffer in state when the business logic needs strict order.</li>
 <li><b>Async I/O</b>: <code>AsyncDataStream.orderedWait</code> preserves order; <code>unorderedWait</code> emits results as they complete (faster, order lost).</li>
 <li>Kafka itself: per-partition order on the producer side also needs idempotent producers / <code>max.in.flight.requests.per.connection</code> settings.</li>
 </ul>

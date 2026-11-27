@@ -30,7 +30,7 @@ ${FA.C('warn', 'keyBy is not an operator', 'In the job graph you will NOT find a
 <li>The sender serializes each record into a <b>network buffer</b> (a memory segment from the TM's network memory) for the target subtask's channel.</li>
 <li>A buffer is sent when it is full or when <code>execution.buffer-timeout</code> (default 100 ms) expires, which trades latency against throughput.</li>
 <li>If both subtasks are in the same TM, the buffer is handed over locally; otherwise it goes over TCP (multiplexed per TM pair).</li>
-<li><b>Credit-based flow control</b>: a receiver announces how many buffers it can accept (credits). When a receiver is slow, credits run out and the sender cannot get output buffers. That waiting time is <b>backpressure</b> (Level 11).</li>
+<li><b>Credit-based flow control</b>: a receiver announces how many buffers it can accept (credits). When a receiver is slow, credits run out and the sender cannot get output buffers. That waiting time is <b>backpressure</b> (Level 12).</li>
 </ol>
 ${FA.D('network-exchange')}
 <p>All-to-all exchanges (HASH, REBALANCE, BROADCAST) create <b>sender × receiver</b> channels: 100 × 100 = 10,000 logical channels, each needing buffers. This is one reason very high parallelism needs more network memory.</p>` },

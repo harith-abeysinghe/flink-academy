@@ -1,71 +1,68 @@
 FA.registerLevel({
-  id: 13, track: 'Operations', icon: '🚀', minutes: 25,
-  title: 'Deployment, scaling & upgrades',
-  summary: 'Session vs application clusters, Kubernetes Operator, HA, rescaling, autoscaling and safe upgrade procedures.',
-  objectives: ['Choose a deployment mode', 'Describe a FlinkDeployment on Kubernetes', 'Rescale and upgrade a stateful job safely', 'Know what HA protects against'],
+  id: 13, track: 'Operations', icon: '⚙️', minutes: 30,
+  title: 'Configuration & the memory model',
+  summary: 'config.yaml vs flink-conf.yaml, config precedence, the TaskManager memory model, and the settings that matter most.',
+  objectives: ['Know where each setting is configured and what overrides what', 'Compute TaskManager memory components', 'Diagnose common memory errors', 'Know the top settings for production'],
   sections: [
-    { title: 'Deployment modes', html: `
-<table class="t"><tr><th></th><th>Session</th><th>Application</th></tr>
-<tr><td>Cluster lifetime</td><td>Long-running, shared by many jobs</td><td>One cluster per application, torn down with it</td></tr>
-<tr><td>main() runs</td><td>On the client</td><td>On the JobManager</td></tr>
-<tr><td>Isolation</td><td>Weak (shared TMs; a crash affects all jobs)</td><td>Strong</td></tr>
-<tr><td>Good for</td><td>Dev, many small/short jobs, SQL gateway</td><td>Production streaming jobs (K8s standard)</td></tr></table>
-${FA.D('session-vs-app')}
-<p>Resource providers: Standalone (Docker/VMs), native Kubernetes, YARN. Standalone cannot add TaskManagers by itself.</p>` },
-    { title: 'Kubernetes Operator', html: `
-<pre><code>apiVersion: flink.apache.org/v1beta1
-kind: FlinkDeployment
-metadata: { name: orders-agg }
-spec:
-  image: registry/orders-agg:1.4.2
-  flinkVersion: v1_19
-  flinkConfiguration:
-    taskmanager.numberOfTaskSlots: "4"
-    state.backend.type: rocksdb
-    execution.checkpointing.interval: 60s
-    state.checkpoints.dir: s3://bucket/ckpt
-    state.savepoints.dir: s3://bucket/sp
-    high-availability.type: kubernetes
-    high-availability.storageDir: s3://bucket/ha
-  jobManager: { resource: { memory: "2048m", cpu: 1 } }
-  taskManager: { resource: { memory: "8192m", cpu: 4 } }
-  job:
-    jarURI: local:///opt/flink/usrlib/orders-agg.jar
-    parallelism: 8
-    upgradeMode: savepoint        # stateless | last-state | savepoint
-    state: running</code></pre>
+    { title: 'Where configuration lives', html: `
 <ul>
-<li>Change <code>image</code>/<code>parallelism</code> → the operator performs the upgrade according to <code>upgradeMode</code>: <b>savepoint</b> (stop with savepoint → redeploy → restore), <b>last-state</b> (uses the latest checkpoint via HA metadata; fast), <b>stateless</b> (start fresh).</li>
-<li>The operator can also trigger periodic savepoints and offers an <b>autoscaler</b> that adjusts per-vertex parallelism from busy time and backpressure metrics.</li>
-<li>Number of TM pods ≈ ceil(parallelism / slots per TM) for the default slot sharing group.</li>
+<li><b>conf/config.yaml</b>: the cluster configuration file since Flink 1.19 (standard YAML 1.2, nested or flat keys). The legacy <code>flink-conf.yaml</code> still worked in 1.19/1.20 (and took priority if present) but is <b>not supported in Flink 2.0+</b>.</li>
+<li><b>Docker</b>: the <code>FLINK_PROPERTIES</code> environment variable is appended to the config.</li>
+<li><b>Kubernetes Operator</b>: <code>spec.flinkConfiguration</code> in the FlinkDeployment.</li>
+<li><b>Per job</b>: <code>-D key=value</code> on <code>flink run</code>, or in code (<code>env.configure(...)</code>, <code>env.enableCheckpointing(...)</code>). Beam: pipeline options.</li>
 </ul>
-${FA.D('k8s-upgrade')}` },
-    { title: 'High availability', html: `
-<p>Without HA, losing the JobManager means losing the job's coordination; it must be resubmitted (from a retained checkpoint or savepoint). With HA (<code>kubernetes</code> or <code>zookeeper</code>), a new JobManager takes over leadership, reads job metadata and the latest completed checkpoint pointer from <code>high-availability.storageDir</code>, and recovers the job automatically.</p>
-${FA.D('ha-failover')}` },
-    { title: 'Rescaling & safe upgrades', html: `
-<ol>
-<li>Confirm checkpoints are healthy and stateful operators have stable <code>uid</code>s (Beam: stable transform names).</li>
-<li><code>flink stop --savepointPath …</code> (or let the operator do it).</li>
-<li>Deploy the new version/parallelism with <code>-s &lt;savepoint&gt;</code>. Keyed state is redistributed by key groups (new p ≤ max parallelism).</li>
-<li>Watch: INITIALIZING time, first checkpoint success, lag catch-up, no restore errors.</li>
-<li>Keep the savepoint until the new version is proven.</li>
-</ol>
-${FA.D('keygroup-rescale', { title: 'Rescaling from a savepoint: whole key groups move' })}
-<p><b>Adaptive scheduler / reactive mode</b> (<code>jobmanager.scheduler: adaptive</code>): the job adapts its parallelism to the available slots, e.g. scaling with the number of TaskManagers.</p>
-${FA.C('warn', 'Compatibility', 'State schema changes need compatible serializers (POJO/Avro evolution rules). Changing key types, max parallelism or removing uids breaks restore. Beam: changing coders or step names can break restore too.')}` }
+<p>Cluster-level options (memory, slots, HA, ports) are read when the JobManager/TaskManager processes start, so changing them requires a <b>restart</b> of those processes. Job-level options (parallelism, checkpointing, restart strategy) can be set per job; code usually wins over cluster defaults.</p>
+${FA.C('tip', 'Explore all settings', 'The <a href="#/config">Config explorer</a> lists the important keys with defaults and tips, plus the Beam pipeline options.')}` },
+    { title: 'TaskManager memory model', html: `
+${FA.D('memory-tree')}
+<pre><code>Total Process Memory (taskmanager.memory.process.size)  ← container/pod limit
+├── JVM Metaspace (256m)
+├── JVM Overhead (10%, 192m..1g)        ← threads, code cache, native
+└── Total Flink Memory (taskmanager.memory.flink.size)
+    ├── JVM Heap  (-Xmx)
+    │   ├── Framework Heap (128m)
+    │   └── Task Heap (rest)             ← your objects, HashMap state
+    └── Off-heap
+        ├── Managed Memory (40%)         ← RocksDB, batch sort/join, Python
+        ├── Network Memory (10%, min 64m) ← buffers between tasks
+        ├── Framework Off-Heap (128m)
+        └── Task Off-Heap (0)            ← your direct/native memory</code></pre>
+${FA.W('memory', {})}
+<p>Check the default: process 1728m → overhead 192 → Flink memory 1280 → network 128, managed 512, task heap 384. That is exactly what a default Docker TaskManager logs at startup.</p>` },
+    { title: 'Memory errors and what they mean', html: `
+<table class="t"><tr><th>Error</th><th>Meaning</th><th>Typical fix</th></tr>
+<tr><td><code>OutOfMemoryError: Java heap space</code></td><td>Task heap too small (heap state, big windows, buffering)</td><td>More task heap; RocksDB; incremental aggregation; TTL</td></tr>
+<tr><td><code>OutOfMemoryError: Metaspace</code></td><td>Too many classes loaded (restarts, leaks)</td><td>Raise jvm-metaspace.size; fix classloader leaks</td></tr>
+<tr><td><code>OutOfMemoryError: Direct buffer memory</code></td><td>Direct memory exceeded (connectors, Netty, user code)</td><td>Raise task.off-heap.size</td></tr>
+<tr><td><code>Insufficient number of network buffers</code></td><td>Too many channels for network memory (high parallelism, all-to-all)</td><td>Raise network fraction/min/max</td></tr>
+<tr><td>Container OOMKilled (exit 137), heap looks fine</td><td>Native memory above the limit (RocksDB, glibc arenas)</td><td>Raise jvm-overhead, keep RocksDB in managed memory, check <code>MALLOC_ARENA_MAX</code></td></tr></table>` },
+    { title: 'Top production settings', html: `
+<pre><code>taskmanager.numberOfTaskSlots: 4              # ≈ cores
+parallelism.default: 4
+pipeline.max-parallelism: 720                 # set once (divisible by many p values)
+taskmanager.memory.process.size: 8g
+state.backend.type: rocksdb
+state.backend.incremental: true
+state.checkpoints.dir: s3://…/checkpoints
+execution.checkpointing.interval: 60s
+execution.checkpointing.min-pause: 10s
+execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
+restart-strategy.type: exponential-delay
+high-availability.type: kubernetes
+metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory</code></pre>
+<p>Flink 2.x renamed several checkpoint keys (e.g. <code>execution.checkpointing.dir</code>, <code>execution.checkpointing.incremental</code>). Always check the docs for <b>your</b> version.</p>` }
   ],
-  refs: [['Deployment overview', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/overview/'], ['Flink Kubernetes Operator', 'https://nightlies.apache.org/flink/flink-kubernetes-operator-docs-stable/'], ['Elastic scaling', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/elastic_scaling/'], ['Savepoints', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/state/savepoints/']],
+  refs: [['Configuration', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/config/'], ['Set up Flink\'s process memory', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/memory/mem_setup/'], ['Set up TaskManager memory', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/memory/mem_setup_tm/'], ['FLIP-366 config.yaml', 'https://cwiki.apache.org/confluence/display/FLINK/FLIP-366:+Support+standard+YAML+for+FLINK+configuration'], ['FLIP-49 unified memory', 'https://cwiki.apache.org/confluence/display/FLINK/FLIP-49+Unified+Memory+Configuration+for+TaskExecutors']],
   quiz: [
-    { q: 'Best deployment mode for an isolated production streaming job on Kubernetes?', options: ['Session', 'Application', 'Local', 'Per-job on K8s'], answer: 1, explain: 'Application mode: one cluster per app.' },
-    { q: 'In application mode, main() runs on…', options: ['Client', 'JobManager', 'TaskManager', 'Kafka'], answer: 1, explain: 'That is the defining property of application mode.' },
-    { q: 'Operator <code>upgradeMode: last-state</code> uses…', options: ['A new savepoint', 'The latest checkpoint (via HA metadata)', 'No state', 'Kafka offsets only'], answer: 1, explain: 'Fast upgrades from the last checkpoint.' },
-    { q: 'Parallelism 12 and 4 slots per TaskManager in one slot sharing group. How many TMs are needed?', type: 'number', answer: 3, explain: 'ceil(12/4) = 3.' },
-    { q: 'What does JobManager HA provide?', options: ['Faster checkpoints', 'Automatic JobManager failover with recovery from the latest checkpoint', 'More slots', 'Exactly-once sinks'], answer: 1, explain: 'Leader election + persisted job metadata.' },
-    { q: 'Safe rescale of a stateful job from p=4 to p=8 (max p 128)?', options: ['Change -p and restart without state', 'Stop with savepoint, then run with -p 8 -s <savepoint>', 'Edit the checkpoint files', 'Impossible'], answer: 1, explain: 'Key groups are redistributed on restore.' },
-    { q: 'What prevents restore after an upgrade? (select all)', type: 'multi', options: ['Changing max parallelism', 'Removing/changing operator uids without --allowNonRestoredState', 'Incompatible state serializer changes', 'Changing the job name'], answer: [0, 1, 2], explain: 'Job name does not matter for state.' },
-    { q: 'Which scheduler adapts parallelism to available slots (used by reactive mode)?', options: ['default', 'adaptive', 'region', 'fifo'], answer: 1, explain: 'jobmanager.scheduler: adaptive.' },
-    { q: 'Standalone cluster, job needs more slots. What must happen?', options: ['ResourceManager starts new TMs automatically', 'You start more TaskManagers (or add slots) yourself', 'Flink lowers parallelism silently', 'Nothing, it queues forever successfully'], answer: 1, explain: 'Standalone RM cannot provision TMs.' },
-    { q: 'The Flink Kubernetes Operator autoscaler decides mainly from…', options: ['Kafka partition count only', 'Per-vertex busy time / backpressure / throughput metrics', 'CPU temperature', 'Number of uids'], answer: 1, explain: 'It uses job metrics to compute target parallelism per vertex.' }
+    { q: 'Since which version is <code>config.yaml</code> the default config file, and in which major version is flink-conf.yaml no longer supported?', options: ['1.15 / 1.18', '1.19 / 2.0', '1.17 / 1.20', '2.0 / 3.0'], answer: 1, explain: 'FLIP-366: config.yaml default in 1.19; flink-conf.yaml unsupported in 2.0.' },
+    { q: 'Default <code>taskmanager.memory.managed.fraction</code>?', options: ['0.1', '0.25', '0.4', '0.7'], answer: 2, explain: '40% of total Flink memory.' },
+    { q: 'Which component holds RocksDB\'s block cache by default?', options: ['Task heap', 'Managed memory', 'Network memory', 'Metaspace'], answer: 1, explain: 'RocksDB is bounded by managed memory.' },
+    { q: 'Process size 1728m with defaults. Total Flink memory (MB)?', type: 'number', answer: 1280, tolerance: 1, explain: '1728 − 256 metaspace − 192 overhead = 1280.' },
+    { q: 'A TaskManager has process size 1728m with all other memory settings at their defaults (total Flink memory = 1280 MB). Network memory (MB)?', type: 'number', answer: 128, tolerance: 1, explain: '0.1 × 1280 = 128 (within 64m..1g).' },
+    { q: '"Insufficient number of network buffers" at deployment. Fix?', options: ['Increase managed fraction', 'Increase network memory (fraction/min/max)', 'Increase metaspace', 'Disable checkpointing'], answer: 1, explain: 'Each channel needs buffers; give more network memory.' },
+    { q: 'Container OOMKilled while heap usage looks healthy with RocksDB. Suspect…', options: ['Task heap', 'Native/off-heap memory (RocksDB, overhead) beyond limits', 'Metaspace only', 'Too few slots'], answer: 1, explain: 'Increase overhead; keep RocksDB within managed memory.' },
+    { q: 'You change taskmanager.numberOfTaskSlots in the config. What else is needed?', options: ['Nothing, it applies live', 'Restart the TaskManagers', 'Restart only the job', 'Clear checkpoints'], answer: 1, explain: 'Cluster-level options are read at process start.' },
+    { q: 'How do you pass Flink config to the official Docker image?', options: ['FLINK_PROPERTIES environment variable', 'Kafka headers', 'JAVA_OPTS only', 'It cannot be configured'], answer: 0, explain: 'FLINK_PROPERTIES is appended to the configuration.' },
+    { q: 'JVM -Xmx of a TaskManager equals…', options: ['Total process memory', 'Framework heap + task heap', 'Managed memory', 'Network + task off-heap'], answer: 1, explain: 'JVM heap = framework heap + task heap.' }
   ]
 });

@@ -29,7 +29,7 @@ env.execute("orders-per-minute");</code></pre>
 <li><b>Transformations</b>: <code>map</code> (1→1), <code>filter</code> (1→0/1), <code>flatMap</code> (1→n), <code>keyBy</code> (partition by key, giving a <i>KeyedStream</i>), <code>window</code>, <code>reduce/aggregate</code>, <code>process</code> (ProcessFunction with timers/state), <code>connect</code>/<code>union</code>, async I/O.</li>
 <li><b>Sinks</b>: <code>sinkTo(KafkaSink …)</code>. Nothing runs until <code>env.execute()</code>.</li>
 </ul>
-${FA.C('tip', 'Always set .name() and .uid()', '<code>.name()</code> is what you see in the UI boxes. <code>.uid()</code> is a stable operator ID used to map state in savepoints. Without it, changing the job graph can break state restore (Level 9).')}` },
+${FA.C('tip', 'Always set .name() and .uid()', '<code>.name()</code> is what you see in the UI boxes. <code>.uid()</code> is a stable operator ID used to map state in savepoints. Without it, changing the job graph can break state restore (Level 10).')}` },
     { title: 'Operator chaining: the rules', html: `
 <p>Flink <b>chains</b> consecutive operators into one task so they run in the <b>same thread</b> and records are passed by method call: no serialization, no network buffer, no thread handover. Two operators are chained only if <b>all</b> of these hold:</p>
 ${FA.D('chaining')}

@@ -86,7 +86,7 @@ docker compose exec jobmanager ./bin/flink list</code></pre>
     <pre><code>docker compose exec jobmanager ./bin/flink stop --savepointPath /tmp/flink-savepoints &lt;jobId&gt;
 # note the printed savepoint path, then restart with a different parallelism:
 docker compose exec jobmanager ./bin/flink run -d -p 4 -s /tmp/flink-savepoints/savepoint-xxxx ./examples/streaming/StateMachineExample.jar</code></pre>
-    <p>The job resumes from its state with more subtasks: key groups were redistributed (Level 6).</p>
+    <p>The job resumes from its state with more subtasks: key groups were redistributed (Level 7).</p>
     <h2>5. Kill a worker and watch recovery</h2>
     <pre><code>docker compose stop taskmanager-2
 # watch: Exceptions tab, job RESTARTING, then FAILED or stuck waiting for slots

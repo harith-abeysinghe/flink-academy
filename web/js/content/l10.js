@@ -1,51 +1,68 @@
 FA.registerLevel({
-  id: 10, track: 'Operations', icon: '🖥️', minutes: 35,
-  title: 'The Flink Web UI in depth',
-  summary: 'Every screen of the dashboard: overview, job graph boxes and arrows, vertex tabs, checkpoints, exceptions, TaskManagers and Job Manager.',
-  objectives: ['Read each line inside a job-graph box', 'Use SubTasks, BackPressure, Watermarks, Metrics and FlameGraph tabs', 'Read the Checkpoints tab', 'Know where to look for each kind of problem'],
+  id: 10, track: 'Time & reliability', icon: '📸', minutes: 30,
+  title: 'Checkpoints, savepoints & recovery',
+  summary: 'Barriers, alignment, unaligned checkpoints, exactly-once vs end-to-end, savepoints, uids, restart strategies.',
+  objectives: ['Explain how barriers create consistent snapshots', 'Know why backpressure slows aligned checkpoints', 'Use savepoints for upgrades and rescaling', 'Configure restart and checkpoint settings sensibly'],
   sections: [
-    { title: 'Guided tour', html: `
-<p>This mock follows the real Flink 1.x dashboard layout (labels can differ slightly between versions). Click around: every dashed red element explains itself. Open <b>Running Jobs</b>, then try each tab.</p>
-${FA.W('dashboard', {})}` },
-    { title: 'Reading one box', html: `
-${FA.D('box-anatomy')}
+    { title: 'How a checkpoint works', html: `
+<ol>
+<li>The JobMaster's checkpoint coordinator triggers checkpoint <i>n</i>; sources record their position (e.g. Kafka offsets) and inject <b>barrier n</b> into their output streams.</li>
+<li>Barriers flow <b>with the data</b>, never overtaking records (in aligned mode). Everything before barrier n belongs to checkpoint n.</li>
+<li>An operator with several inputs <b>aligns</b>: it waits until barrier n has arrived on <b>all</b> inputs, then snapshots its state (asynchronously) and forwards the barrier.</li>
+<li>When all sinks have acknowledged, checkpoint n is <b>complete</b>; transactional sinks then commit (two-phase commit, e.g. KafkaSink EXACTLY_ONCE).</li>
+</ol>
+${FA.D('checkpoint-flow')}
+${FA.W('barriers', {})}
+<p>This is a variant of the Chandy-Lamport algorithm ("asynchronous barrier snapshotting").</p>` },
+    { title: 'Checkpoints under backpressure', html: `
+<p>When tasks are backpressured, network buffers are full, so barriers wait behind all the queued data. Alignment can take minutes, and checkpoints time out (<code>execution.checkpointing.timeout</code>, default 10 min). The Checkpoints tab shows a long <b>alignment duration</b> and expired checkpoints.</p>
+${FA.D('aligned-vs-unaligned')}
 <ul>
-<li><b>Colour</b>: blue = idle, red = busy, black = backpressured, with blends in between.</li>
-<li>"(max)" means the <b>worst subtask</b>. One hot subtask (skew) is enough to make the box look busy, so check the <b>SubTasks</b> tab.</li>
-<li><b>Records Received/Sent</b> in the table below the graph count only <b>network</b> traffic between tasks. A source shows 0 received and a sink 0 sent; chained hand-offs are invisible there.</li>
+<li><b>Fix the bottleneck</b> first (Level 12).</li>
+<li><b>Unaligned checkpoints</b> (<code>execution.checkpointing.unaligned: true</code>): barriers overtake in-flight data, which is stored as part of the checkpoint. Checkpoint time becomes independent of backpressure, but size and I/O grow.</li>
+<li><b>Buffer debloating</b> (<code>taskmanager.network.memory.buffer-debloat.enabled</code>): keeps in-flight data small so aligned barriers move faster.</li>
 </ul>` },
-    { title: 'Where to look for what', html: `
-<table class="t"><tr><th>Symptom</th><th>Look at</th></tr>
-<tr><td>Job keeps restarting</td><td>Exceptions tab (root cause, deepest "Caused by"), TaskManager logs</td></tr>
-<tr><td>Lag growing / slow</td><td>Job graph colours → BackPressure tab → FlameGraph of the red task</td></tr>
-<tr><td>Windows never fire</td><td>Watermarks tab ("No Watermark", stuck values) and idle partitions</td></tr>
-<tr><td>Checkpoints failing</td><td>Checkpoints → History (expand row: per-task sync/async/alignment), Summary</td></tr>
-<tr><td>One subtask much slower</td><td>SubTasks tab: records received per subtask → key skew</td></tr>
-<tr><td>OOM / container killed</td><td>Task Managers → Metrics (heap, managed, network), logs; Level 12 memory model</td></tr>
-<tr><td>"Is my config really applied?"</td><td>Job Manager → Configuration, Job → Configuration</td></tr>
-<tr><td>Long startup after restart</td><td>TimeLine (INITIALIZING = state restore)</td></tr></table>` },
-    { title: 'Useful metrics (Metrics tab / Prometheus)', html: `
+    { title: 'Exactly-once: what it really means', html: `
 <ul>
-<li><code>numRecordsInPerSecond</code>, <code>numRecordsOutPerSecond</code>: throughput per task/operator.</li>
-<li><code>busyTimeMsPerSecond</code>, <code>backPressuredTimeMsPerSecond</code>, <code>idleTimeMsPerSecond</code>: they sum to about 1000 per subtask.</li>
-<li><code>currentInputWatermark</code> / <code>currentOutputWatermark</code>.</li>
-<li>Kafka source: <code>pendingRecords</code> / records-lag-max: consumer lag.</li>
-<li><code>lastCheckpointDuration</code>, <code>numberOfFailedCheckpoints</code> (job level).</li>
-<li>TM: <code>Status.JVM.Memory.Heap.Used</code>, <code>Status.Flink.Memory.Managed.Used</code>, GC time.</li>
+<li><b>Exactly-once state</b>: after recovery, every record's effect on Flink state is counted once. Records after the last checkpoint are <i>replayed</i> from the source.</li>
+<li><b>End-to-end exactly-once</b> also needs <b>replayable sources</b> (Kafka) and <b>transactional or idempotent sinks</b> (KafkaSink with EXACTLY_ONCE + a transactional id prefix; upserts by key into a DB). Otherwise replays cause duplicates in the external system: <b>at-least-once output</b>.</li>
+<li>Transactional Kafka output becomes visible only when the checkpoint completes, so consumers with <code>isolation.level=read_committed</code> see results with checkpoint-interval latency.</li>
 </ul>
-${FA.C('tip', 'REST API', 'Everything in the UI comes from the REST API on the same port (8081): e.g. <code>/jobs/overview</code>, <code>/jobs/&lt;id&gt;/vertices/&lt;vid&gt;/backpressure</code>, <code>/jobs/&lt;id&gt;/checkpoints</code>. That is useful for scripts and alerts.')}` }
+${FA.D('recovery-replay')}` },
+    { title: 'Savepoints', html: `
+<table class="t"><tr><th></th><th>Checkpoint</th><th>Savepoint</th></tr>
+<tr><td>Purpose</td><td>Automatic failure recovery</td><td>Planned operations: upgrade code, change parallelism, migrate cluster/version, A/B</td></tr>
+<tr><td>Owner</td><td>Flink (deleted when superseded, unless retained)</td><td>You (never deleted automatically)</td></tr>
+<tr><td>Format</td><td>Backend-specific, may be incremental</td><td>Canonical (portable), or native format if requested</td></tr></table>
+<pre><code># stop gracefully with a savepoint (preferred over cancel)
+flink stop --savepointPath s3://bucket/savepoints &lt;jobId&gt;
+# restart new code / new parallelism from it
+flink run -s s3://bucket/savepoints/savepoint-abc123 -p 8 my-job.jar
+# if you removed an operator that had state:
+flink run -s ... --allowNonRestoredState my-job.jar</code></pre>
+${FA.D('savepoint-upgrade')}
+${FA.C('warn', 'Assign .uid() to stateful operators', 'State in a savepoint is matched to operators by <b>operator ID</b>. Without explicit <code>.uid()</code>, IDs are generated from the graph structure, so inserting a map can change them and the restore fails or silently drops state. In Beam, state is mapped via transform names, so keep step names stable across upgrades.')}` },
+    { title: 'Restart strategies', html: `
+<ul>
+<li><code>exponential-delay</code>: the default when checkpointing is enabled (Flink 1.19+). Delays grow between attempts, up to a max.</li>
+<li><code>fixed-delay</code>: N attempts with a fixed delay, then FAILED.</li>
+<li><code>failure-rate</code>: fail if more than N failures happen within an interval.</li>
+<li><code>none</code>: fail immediately.</li>
+</ul>
+<p><code>jobmanager.execution.failover-strategy: region</code> restarts only the affected pipelined region. In typical streaming jobs with keyBy (all-to-all), that region is the whole job.</p>
+<p>Beam: <code>--checkpointingInterval</code> defaults to <b>-1 = disabled</b>. A Beam streaming job without it has <b>no checkpoints</b>! Also check <code>--numberOfExecutionRetries</code>.</p>` }
   ],
-  refs: [['Monitoring back pressure', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/monitoring/back_pressure/'], ['Monitoring checkpointing', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/monitoring/checkpoint_monitoring/'], ['Flame graphs', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/debugging/flame_graphs/'], ['Metrics', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/metrics/'], ['Confluent Flink 101: Web UI exercise', 'https://developer.confluent.io/courses/apache-flink/web-ui-exercise']],
+  refs: [['Stateful stream processing: checkpointing & barriers', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/concepts/stateful-stream-processing/'], ['Checkpoints', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/state/checkpoints/'], ['Savepoints', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/state/savepoints/'], ['Checkpointing under backpressure', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/state/checkpointing_under_backpressure/'], ['Task failure recovery', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/state/task_failure_recovery/'], ['Lightweight Asynchronous Snapshots paper', 'https://arxiv.org/abs/1506.08603']],
   quiz: [
-    { q: 'In the job graph, a fully backpressured task is coloured…', options: ['Red', 'Blue', 'Black', 'Green'], answer: 2, explain: 'Blue idle, red busy, black backpressured.' },
-    { q: 'What does "Busy (max): 95%" in a box mean?', options: ['Average busy time of all subtasks', 'The busiest subtask of that task was working 95% of the time', 'CPU of the TaskManager', '95% of records processed'], answer: 1, explain: '(max) is the worst subtask.' },
-    { q: 'Why does a source task show 0 for "Records Received"?', options: ['Bug', 'The table counts records received over network edges from other tasks; a source has none', 'The source is idle', 'Metrics are disabled'], answer: 1, explain: 'Only inter-task network traffic is counted there.' },
-    { q: 'Job keeps restarting. First place to look?', options: ['FlameGraph', 'Exceptions tab', 'Watermarks', 'Submit New Job'], answer: 1, explain: 'Exceptions tab shows the root cause and history.' },
-    { q: 'Windows never fire. Which vertex tab helps most?', options: ['Accumulators', 'Watermarks', 'TaskManagers', 'Detail'], answer: 1, explain: 'Look for "No Watermark" or stuck values (idle splits).' },
-    { q: 'One subtask of a window task receives 10× more records than the others. What is it?', options: ['Backpressure', 'Key skew', 'GC', 'Checkpoint alignment'], answer: 1, explain: 'Uneven per-subtask input under HASH = skewed keys.' },
-    { q: 'Which tab shows which method burns CPU in a busy task?', options: ['FlameGraph', 'TimeLine', 'Configuration', 'Checkpoints'], answer: 0, explain: 'Requires rest.flamegraph.enabled: true.' },
-    { q: 'Subtasks stay long in INITIALIZING after a restart. Likely reason?', options: ['Slot shortage', 'Large state being restored', 'Watermark idleness', 'Too many network buffers'], answer: 1, explain: 'INITIALIZING includes state restore.' },
-    { q: 'Where do you verify the effective value of taskmanager.numberOfTaskSlots?', options: ['Job Manager → Configuration', 'Exceptions', 'Watermarks', 'Completed Jobs'], answer: 0, explain: 'The Job Manager page shows effective cluster config.' },
-    { q: 'busyTimeMsPerSecond + backPressuredTimeMsPerSecond + idleTimeMsPerSecond ≈', type: 'number', answer: 1000, tolerance: 1, explain: 'They partition each second of a subtask\'s time.' }
+    { q: 'In aligned checkpointing, what does a two-input operator do when the barrier arrives on input 1 only?', options: ['Snapshots immediately', 'Blocks input 1 (buffers records after the barrier) and keeps processing input 2 until its barrier arrives', 'Drops input 2', 'Fails the checkpoint'], answer: 1, explain: 'That waiting is alignment.' },
+    { q: 'Why do aligned checkpoints get slow under backpressure?', options: ['RocksDB compaction', 'Barriers queue behind full network buffers of in-flight data', 'The JobManager is busy', 'Watermarks are late'], answer: 1, explain: 'Barriers do not overtake data in aligned mode.' },
+    { q: 'What do unaligned checkpoints trade?', options: ['Correctness for speed', 'Faster checkpoints under backpressure, but bigger checkpoints (in-flight data persisted)', 'Lower latency for no state', 'Exactly-once for at-least-once'], answer: 1, explain: 'Still exactly-once, but more data to store.' },
+    { q: 'For end-to-end exactly-once into Kafka you need… (select all)', type: 'multi', options: ['Checkpointing enabled', 'A replayable source', 'A transactional (or idempotent) sink', 'Parallelism 1'], answer: [0, 1, 2], explain: 'Parallelism is irrelevant.' },
+    { q: 'Main purpose of a savepoint?', options: ['Automatic crash recovery', 'Planned upgrades, rescaling and migrations: user-owned and portable', 'Speeding up checkpoints', 'Storing logs'], answer: 1, explain: 'Checkpoints are for recovery; savepoints are for operations.' },
+    { q: 'You added a new map before a stateful window, and restore from a savepoint now fails to map state. Missing practice?', options: ['Using RocksDB', 'Setting explicit .uid() on stateful operators', 'Using allowedLateness', 'Using rebalance'], answer: 1, explain: 'Stable uids keep the operator → state mapping across graph changes.' },
+    { q: 'You removed a stateful operator. Which flag allows restoring the rest?', options: ['--force', '--allowNonRestoredState', '--ignoreState', '-p 0'], answer: 1, explain: 'It skips state that has no matching operator.' },
+    { q: 'Default of Beam\'s <code>--checkpointingInterval</code> on the FlinkRunner?', options: ['60 s', '-1 (checkpointing disabled)', '10 s', '5 min'], answer: 1, explain: 'You must set it explicitly for streaming jobs.' },
+    { q: 'Best way to stop a job for an upgrade?', options: ['Kill the TaskManagers', 'flink stop --savepointPath … (stop with savepoint)', 'Cancel without savepoint', 'Delete the checkpoint dir'], answer: 1, explain: 'Stop-with-savepoint produces a consistent snapshot and finishes cleanly.' },
+    { q: 'Default checkpoint timeout?', options: ['1 min', '10 min', '1 hour', 'no timeout'], answer: 1, explain: 'execution.checkpointing.timeout defaults to 10 minutes.' }
   ]
 });

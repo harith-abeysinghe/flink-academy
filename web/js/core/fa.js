@@ -56,10 +56,22 @@ window.FA = window.FA || {};
   const RANKS = [[0, 'Intern Streamer'], [300, 'Junior Operator'], [800, 'Stream Engineer'], [1500, 'Watermark Wrangler'], [2400, 'Checkpoint Champion'], [3400, 'Backpressure Buster'], [4500, 'Flink Architect']];
   FA.store = {
     state: null, serverAvailable: false, _t: null,
-    blank() { return { levels: {}, xp: 0, challenges: {}, labSaved: null, updatedAt: new Date(0).toISOString() }; },
+    blank() { return { levels: {}, xp: 0, challenges: {}, labSaved: null, levelLayout: 2, updatedAt: new Date(0).toISOString() }; },
+    /* Level layout 2 split old Level 8 into 8 (watermarks) and 9 (windows), so old levels 9-15 became 10-16.
+       Shift saved progress to match. Old Level 8 covered both topics, so passing it also passes the new Level 9.
+       Call it on saved data before merging with blank(), which already carries the new layout. */
+    migrate(s) {
+      if (!s || s.levelLayout === 2) return false;
+      const old = s.levels || {}, lv = {};
+      Object.keys(old).forEach(k => { const n = +k; lv[n >= 9 ? n + 1 : n] = old[k]; });
+      if (old[8] && old[8].passed) lv[9] = Object.assign({}, old[8]);
+      s.levels = lv; s.levelLayout = 2;
+      return true;
+    },
     async init() {
-      let local = null;
+      let local = null, migrated = false;
       try { local = JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch (e) { local = null; }
+      migrated = this.migrate(local);
       this.state = Object.assign(this.blank(), local || {});
       if (location.protocol.startsWith('http')) {
         try {
@@ -68,12 +80,14 @@ window.FA = window.FA || {};
             this.serverAvailable = true;
             const body = await r.json();
             if (body && body.data && (!local || (body.data.updatedAt || '') > (local.updatedAt || ''))) {
+              migrated = this.migrate(body.data) || migrated;
               this.state = Object.assign(this.blank(), body.data);
               this._writeLocal();
             }
           }
         } catch (e) { this.serverAvailable = false; }
       }
+      if (migrated) this.save();
     },
     _writeLocal() { try { localStorage.setItem(LS_KEY, JSON.stringify(this.state)); } catch (e) { /* storage may be unavailable */ } },
     save() {
@@ -104,7 +118,7 @@ window.FA = window.FA || {};
       this.save();
     },
     exportJson() { return JSON.stringify(this.state, null, 2); },
-    importJson(txt) { const d = JSON.parse(txt); this.state = Object.assign(this.blank(), d); this.save(); }
+    importJson(txt) { const d = JSON.parse(txt); this.migrate(d); this.state = Object.assign(this.blank(), d); this.save(); }
   };
 
   /* ---------- Router ---------- */

@@ -1,4 +1,4 @@
-/* Animated diagrams for lessons 6-9 (ordering, broadcast, state, time, checkpoints) */
+/* Animated diagrams for lessons 6, 7 and 10 (ordering, broadcast, state, checkpoints) */
 (function (FA) {
   'use strict';
   const D = FA.registerDiagram;
@@ -289,7 +289,7 @@
     }
   });
 
-  /* L7 + L13: key groups and rescaling */
+  /* L7 + L14: key groups and rescaling */
   D('keygroup-rescale', {
     title: 'Key groups: the unit that moves when you rescale', h: 272,
     build(S) {
@@ -316,288 +316,7 @@
     }
   });
 
-  /* L8: watermarks flowing with the stream */
-  D('watermark-flow', {
-    title: 'Watermarks flow with the events and close windows', h: 290,
-    build(S) {
-      const st = { a: 0, b: 0 };
-      const src = S.box(20, 95, 130, 64, 'Source', { sub: 'max ts: none yet' });
-      S.arrow(150, 127, 478, 127);
-      S.text(315, 108, 'bounded out-of-orderness = 2 s', { size: 11, fill: '#93a0bb' });
-      S.box(480, 28, 300, 205, 'Window operator', { corner: true });
-      const wm = S.text(700, 43, 'watermark: none', { tone: 'purple', weight: 700, size: 12 });
-      const bA = S.box(493, 68, 140, 152, 'window [0,5)', { corner: true, tone: 'muted' });
-      const bB = S.box(642, 68, 128, 152, 'window [5,10)', { corner: true, tone: 'muted' });
-      const slot = (b, k) => [b.bx + 38 + (k % 2) * 56, b.by + 48 + Math.floor(k / 2) * 38];
-      const ev = async (A, ts) => {
-        const inA = ts < 5, b = inA ? bA : bB, k = inA ? st.a++ : st.b++;
-        await A.fly(String(ts), [150, 127], slot(b, k), { via: [[470, 127]], keep: true, tone: 'warn', ms: 1000 });
-      };
-      const flag = async (A, w, max) => {
-        S.sub(src, `max ts ${max} → W(${w})`);
-        await A.fly('W' + w, [150, 127], [478, 127], { shape: 'bar', tone: 'purple', ms: 900, h: 26 });
-        A.text(wm, 'watermark: ' + w);
-      };
-      return [
-        { cap: 'The number on each event is its <b>event timestamp in seconds</b>, not a value. Window [0,5) collects timestamps from 0 s up to (not including) 5 s. The source tracks the highest timestamp seen and emits <b>watermark = max − 2 s</b> (the extra − 1 ms is ignored here).' },
-        { cap: 'Events 1, 3 and 2 go into window [0,5). Watermark W(1) follows them: "no event with a timestamp ≤ 1 is still coming".',
-          run: async A => { await A.stagger([1, 3, 2], ts => ev(A, ts), 350); await flag(A, 1, 3); } },
-        { cap: 'Event 6 raises the max to 6, so the watermark advances to W(4). Window [0,5) is still open.', run: async A => { await ev(A, 6); await flag(A, 4, 6); } },
-        { cap: 'Event 4 arrives after 6, so it is out of order. But the watermark is only 4, and window [0,5) needs it to pass 5, so the window is still open and 4 counts.', run: A => ev(A, 4) },
-        { cap: 'Event 8 pushes the watermark to W(6). It has passed 5, so Flink now assumes every event of [0,5) has arrived: the window <b>fires</b> with 4 events (1, 3, 2, 4) and its state is deleted. Window [5,10) stays open.',
-          run: async A => { await ev(A, 8); await flag(A, 6, 8); S.tone(bA, 'ok'); await A.fly('count = 4 → sink', [bA.cx, bA.B - 6], [bA.cx, 262], { tone: 'ok', keep: true, ms: 700 }); } }
-      ];
-    }
-  });
-
-  /* L8: idle source holds back the minimum watermark */
-  D('idle-min', {
-    title: 'One idle partition stalls every window', h: 260,
-    build(S) {
-      const p0 = S.box(20, 30, 175, 64, 'partition 0', { sub: 'W = 10:00' });
-      const p1 = S.box(20, 166, 175, 64, 'partition 1', { sub: 'W = 10:00' });
-      const op = S.box(370, 95, 230, 70, 'Window operator', { sub: 'W = min(10:00, 10:00) = 10:00' });
-      S.arrow(195, 62, 368, 118); S.arrow(195, 198, 368, 142);
-      S.arrow(600, 130, 668, 130);
-      const out = S.text(728, 130, 'windows\nwaiting', { size: 12.5, fill: '#93a0bb', weight: 700 });
-      return [
-        { cap: 'An operator with two inputs uses the <b>minimum</b> of their watermarks.' },
-        { cap: 'Partition 0 keeps receiving data, so its watermark advances: 10:01, 10:02, … 10:05. The operator\'s watermark does not move.',
-          run: async A => {
-            for (let m = 1; m <= 5; m++) {
-              await A.fly('W', [195, 62], [368, 118], { shape: 'bar', tone: 'purple', ms: 500, h: 22 });
-              S.sub(p0, 'W = 10:0' + m); S.sub(op, `W = min(10:0${m}, 10:00) = 10:00`);
-            }
-          } },
-        { cap: 'Partition 1 has been quiet all night. Its watermark is stuck at 10:00, so the minimum is stuck, and <b>no window fires</b>. The Watermarks tab shows a value stuck in the past.',
-          run: async A => { S.tone(p1, 'muted'); S.sub(p1, 'W = 10:00 (no data)'); S.tone(op, 'warn'); A.text(out, 'no output'); S.tone(out, 'bad'); await A.blink(p1, 2); } },
-        { cap: '<code>withIdleness(1 min)</code> marks partition 1 idle, so it is left out of the minimum. The watermark jumps to 10:05 and the windows fire.',
-          run: async A => {
-            p1.r.setAttribute('stroke-dasharray', '5 4'); S.sub(p1, 'idle → ignored');
-            S.sub(op, 'W = 10:05 (partition 1 idle)'); S.tone(op, 'ok'); A.text(out, 'windows\nfire'); S.tone(out, 'ok');
-            await A.stagger([0, 1, 2], () => A.fly('', [600, 130], [668, 130], { r: 6, tone: 'ok', ms: 450 }), 200);
-          } }
-      ];
-    }
-  });
-
-  /* L8: window types */
-  D('window-types', {
-    title: 'The same events, three kinds of windows', h: 312,
-    build(S) {
-      const X = t => 150 + t * 50;
-      const evs = [0.5, 1.2, 2.1, 2.6, 5.4, 5.9, 6.3, 9.6, 10.2, 11];
-      S.line(140, 288, 760, 288, { color: '#3a4766' });
-      for (let t = 0; t <= 12; t += 2) { S.line(X(t), 283, X(t), 293, { color: '#3a4766' }); S.text(X(t), 303, t + (t === 0 ? ' min' : ''), { size: 10.5, fill: '#93a0bb' }); }
-      const rl = (y, t) => S.text(12, y, t, { anchor: 'start', size: 12, fill: '#93a0bb', weight: 600 });
-      rl(40, 'events (one key)'); rl(95, 'Tumbling 4 min'); rl(149, 'Sliding 4 min,'); rl(165, 'every 2 min'); rl(232, 'Session, 2 min gap');
-      const guides = evs.map(t => S.line(X(t), 48, X(t), 283, { color: '#1f2940', dash: '2 4', hidden: true }));
-      const dots = evs.map(t => S.token(X(t), 40, '', { r: 6, tone: 'warn', hidden: true }));
-      const inW = (a, b) => evs.filter(t => t >= a && t < b).length;
-      const win = (a, b, y, h, tone) => {
-        const g = S.g({ hidden: true });
-        const r = S.rect(X(a) + 2, y, 0, h, { parent: g, tone, rx: 5 });
-        const t = S.text((X(a) + X(b)) / 2, y + h / 2, inW(a, b) + ' events', { parent: g, size: 11, tone, weight: 700, hidden: true });
-        return { g, r, t, w: X(b) - X(a) - 4 };
-      };
-      const tum = [[0, 4], [4, 8], [8, 12]].map(([a, b]) => win(a, b, 82, 26, 'info'));
-      const sli = [[0, 4], [2, 6], [4, 8], [6, 10], [8, 12]].map(([a, b], i) => win(a, b, i % 2 ? 160 : 130, 25, 'purple'));
-      const ses = [[0.5, 4.6], [5.4, 8.3], [9.6, 12]].map(([a, b]) => win(a, b, 218, 28, 'ok'));
-      const grow = async (A, w) => { await A.show(w.g); await A.to(w.r, { width: w.w }, 600); await A.show(w.t); };
-      return [
-        { cap: 'Ten events of one key, at their event times.', run: async A => { await A.show(guides); await A.stagger(dots, d => A.show(d), 120); } },
-        { cap: '<b>Tumbling</b> (4 min): fixed size, no overlap. Each event belongs to exactly one window.', run: A => A.stagger(tum, w => grow(A, w), 300) },
-        { cap: '<b>Sliding</b> (4 min, every 2 min): the windows overlap, so each event belongs to 2 windows and is counted twice.', run: A => A.stagger(sli, w => grow(A, w), 280) },
-        { cap: '<b>Session</b> (2 min gap): a window stays open while events keep coming, and closes after 2 minutes of silence. Each key gets its own sessions.', run: A => A.stagger(ses, w => grow(A, w), 350) }
-      ];
-    }
-  });
-
-  /* L8: late data options */
-  D('late-data', {
-    title: 'A late event: three ways to handle it', h: 290,
-    build(S) {
-      const st = {};
-      S.box(20, 115, 120, 60, 'Kafka', { tone: 'info' });
-      const op = S.box(210, 90, 230, 110, 'window [0, 5)', { corner: true });
-      const fired = S.text(325, 132, 'fired: count = 4', { tone: 'ok', weight: 700 });
-      S.text(325, 162, 'watermark = 7', { tone: 'purple', weight: 700, size: 12 });
-      S.arrow(140, 145, 208, 145);
-      const out = [['Default: dropped', 'numLateRecordsDropped = 0'], ['allowedLateness(30 s)', 'window re-fires'], ['sideOutputLateData(tag)', 'dead-letter topic']]
-        .map(([t, s], i) => S.box(540, 18 + i * 94, 245, 64, t, { sub: s, tone: 'muted' }));
-      out.forEach(b => S.arrow(440, 145, 538, b.cy, { color: '#3a4766' }));
-      const toOp = A => A.fly('ts 3', [140, 145], [210, 145], { tone: 'warn', keep: true, ms: 700 });
-      return [
-        { cap: 'Window [0,5) already fired (count = 4), because the watermark passed 5. Now an event with timestamp 3 shows up: it is <b>late</b>.',
-          run: async A => { st.t = await toOp(A); S.tone(op, 'warn'); } },
-        { cap: '<b>Default</b>: the late element is dropped and counted in the <code>numLateRecordsDropped</code> metric.',
-          run: async A => { await A.move(st.t, 540, out[0].cy, 800); await A.hide(st.t); S.tone(out[0], 'bad'); S.sub(out[0], 'numLateRecordsDropped = 1'); } },
-        { cap: '<b>allowedLateness</b> keeps the window state a while longer. The late element <b>re-fires</b> the window with an updated result, so downstream must handle updates.',
-          run: async A => { const t = await toOp(A); await A.move(t, 325, 132, 500); await A.hide(t); A.text(fired, 'fired again: count = 5'); await A.fly('count = 5', [440, 145], [540, out[1].cy], { tone: 'ok', ms: 800 }); S.tone(out[1], 'ok'); } },
-        { cap: 'Elements later than the allowed lateness can go to a <b>side output</b> instead, for example a dead-letter topic you can inspect or repair.',
-          run: async A => { const t = await toOp(A); await A.move(t, 540, out[2].cy, 900); await A.hide(t); S.tone(out[2], 'purple'); } }
-      ];
-    }
-  });
-
-  /* L8: event time vs processing time */
-  D('event-vs-processing', {
-    title: 'Event time vs processing time: when it happened vs when Flink saw it', h: 300,
-    build(S) {
-      const X = t => 135 + t * 50, yE = 62, yP = 212;
-      const axis = (y, name, sub) => {
-        S.line(125, y, 760, y, { color: '#3a4766' });
-        for (let t = 0; t <= 12; t += 2) { S.line(X(t), y - 4, X(t), y + 4, { color: '#3a4766' }); S.text(X(t), y + 22, '10:00:' + String(t).padStart(2, '0'), { size: 10, fill: '#6f7c98' }); }
-        S.text(12, y - 7, name, { anchor: 'start', size: 12, weight: 700, fill: '#93a0bb' });
-        S.text(12, y + 9, sub, { anchor: 'start', size: 10.5, fill: '#6f7c98' });
-      };
-      axis(yE, 'event time', 'stored in the record');
-      axis(yP, 'processing time', 'Flink\'s wall clock');
-      const evs = [['A', 1, 2], ['B', 2, 3.2], ['C', 3, 9.5], ['D', 5, 6], ['E', 7, 7.8], ['F', 9, 10.6]];
-      const top = evs.map(([id, e]) => S.token(X(e), yE, id, { tone: 'warn', hidden: true }));
-      const links = evs.map(([id, e, p]) => S.line(X(e), yE + 13, X(p), yP - 13, { color: id === 'C' ? C.bad : '#3a4766', dash: '4 4', hidden: true }));
-      const late = S.g({ hidden: true });
-      S.rect(X(6.6) - 132, 128, 264, 24, { parent: late, rx: 12, fill: '#0e1422', stroke: C.bad, sw: 1 });
-      S.text(X(6.6), 140, 'C: placed in a tunnel, arrives 6.5 s late', { parent: late, tone: 'bad', size: 11.5, weight: 700 });
-      const order = S.g({ hidden: true });
-      S.text(270, 270, 'event order:  A B C D E F', { parent: order, size: 12, mono: true, fill: '#e6ebf5' });
-      S.text(560, 270, 'arrival order:  A B D E C F', { parent: order, size: 12, mono: true, fill: C.bad });
-      const down = (A, i) => { const c = evs[i][0] === 'C'; return A.show(links[i]).then(() => A.fly(evs[i][0], [X(evs[i][1]), yE], [X(evs[i][2]), yP], { tone: c ? 'bad' : 'info', keep: true, ms: c ? 1300 : 800 })); };
-      return [
-        { cap: 'Every record carries a timestamp of <b>when it happened</b>: its <b>event time</b>. Here, six orders placed on phones between 10:00:01 and 10:00:09.',
-          run: A => A.stagger(top, t => A.show(t), 160) },
-        { cap: 'Each record reaches Flink a little later (network, Kafka, retries). The moment Flink handles it is its <b>processing time</b>.',
-          run: A => A.stagger([0, 1, 3, 4, 5], i => down(A, i), 220) },
-        { cap: 'Order C was placed in a tunnel with no signal, so it arrives 6.5 s late, after D and E. <b>Arrival order is not event order.</b>',
-          run: async A => { await down(A, 2); await A.show(late, order); } },
-        { cap: '<b>Event-time</b> windows group records by the top line, so the result is the same whether data arrives late, out of order, or is replayed next week. <b>Processing-time</b> windows group by the bottom line: simpler and faster, but C would be counted in the wrong second.' }
-      ];
-    }
-  });
-
-  /* L8: what the numbers in [0,5) mean */
-  D('window-boundaries', {
-    title: 'Reading [0,5): a range of event time, start included, end excluded', h: 300,
-    build(S) {
-      const X = t => 75 + t * 44, yA = 240;
-      S.line(65, yA, 750, yA, { color: '#3a4766' });
-      for (let t = 0; t <= 15; t++) {
-        const big = t % 5 === 0;
-        S.line(X(t), yA - (big ? 6 : 3), X(t), yA + (big ? 6 : 3), { color: '#3a4766' });
-        S.text(X(t), yA + 18, big ? t + ' s' : t, { size: big ? 11 : 9.5, fill: big ? '#93a0bb' : '#56627e', weight: big ? 700 : null });
-      }
-      S.text(750, yA + 40, 'event time (seconds) →', { anchor: 'end', size: 10.5, fill: '#6f7c98' });
-      const bk = [0, 5, 10].map(a => {
-        const b = S.box(X(a) + 3, 108, X(a + 5) - X(a) - 6, 102, `[${a},${a + 5})`, { corner: true, tone: 'muted' });
-        b.rng = S.text(b.cx, 194, `${a} s ≤ t < ${a + 5} s`, { size: 11, fill: '#93a0bb', mono: true });
-        b.n = 0;
-        return b;
-      });
-      const edge = S.line(X(5), 100, X(5), yA, { color: C.warn, sw: 2.2, dash: '5 4', hidden: true });
-      const rule = S.text(415, 26, 'window start = t − (t mod 5)    12.4 − 2.4 = 10  →  [10,15)', { size: 12.5, mono: true, tone: 'purple', weight: 700, hidden: true });
-      const ev = async (A, ts, tone) => {
-        const b = bk[Math.floor(ts / 5)], k = b.n++;
-        const dot = S.token(X(ts), yA, '', { r: 5, tone: tone || 'warn', hidden: true });
-        await A.fly(Number.isInteger(ts) ? ts.toFixed(1) : String(ts), [X(ts), 62], [b.bx + 38 + k * 66, 152], { tone: tone || 'warn', keep: true, ms: 800 });
-        await A.show(dot);
-        S.tone(b, 'info');
-      };
-      return [
-        { cap: 'A window name is a <b>time range</b>, not a list of values and not a count. <code>[0,5)</code> means "every event whose <b>timestamp</b> t is 0 s ≤ t &lt; 5 s". The square bracket <b>[</b> includes the start; the round bracket <b>)</b> excludes the end.' },
-        { cap: 'Events with timestamps 0.0 s, 1.3 s and 4.999 s all fall in [0,5). Even 4.999 s is inside, because it is still before 5.',
-          run: A => A.stagger([0.0, 1.3, 4.999], ts => ev(A, ts), 260) },
-        { cap: 'An event at exactly <b>5.0 s</b> goes to [5,10), not [0,5): the end is excluded, so consecutive windows never overlap and every timestamp has exactly one tumbling window.',
-          run: async A => { await A.show(edge); await ev(A, 5.0, 'accent'); } },
-        { cap: 'Flink computes the window from the timestamp alone: <code>start = t − (t mod size)</code>. What is <i>in</i> the record (amount, user) plays no part. A window that receives no events is never created and emits nothing.',
-          run: async A => { await A.hide(edge); await A.show(rule); await ev(A, 12.4, 'purple'); } },
-        { cap: 'In a real job timestamps are epoch milliseconds, so [0,5) reads like <code>[10:00:00.000, 10:00:05.000)</code>. Its last instant is 10:00:04.999 (<code>window.maxTimestamp()</code>), which is why it fires once the watermark reaches <b>end − 1 ms</b>.',
-          run: async A => {
-            await A.hide(rule);
-            const p = n => String(n).padStart(2, '0');
-            bk.forEach((b, i) => { A.text(b, `[10:00:${p(i * 5)}, 10:00:${p(i * 5 + 5)})`); A.text(b.rng, `last ms: 10:00:${p(i * 5 + 4)}.999`); });
-            await A.blink(bk[0], 1);
-          } }
-      ];
-    }
-  });
-
-  /* L8: one event lands in several sliding windows */
-  D('sliding-membership', {
-    title: 'Sliding windows of 10 min, every 2 min: one event, five windows', h: 320,
-    build(S) {
-      const X = m => 130 + (m - 56) * 28.5, yA = 292;   /* m = minutes after 9:00 */
-      const fmt = m => `${9 + Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
-      S.line(120, yA, 768, yA, { color: '#3a4766' });
-      for (let m = 56; m <= 78; m += 2) { S.line(X(m), yA - 4, X(m), yA + 4, { color: '#3a4766' }); S.text(X(m), yA + 16, fmt(m), { size: 10, fill: '#93a0bb' }); }
-      const evLine = S.line(X(67), 44, X(67), yA - 4, { color: C.warn, dash: '4 4', hidden: true });
-      const evTk = S.token(X(67), 30, '10:07', { tone: 'warn', hidden: true });
-      const rows = [56, 58, 60, 62, 64, 66, 68].map((s, i) => {
-        const y = 56 + i * 32, hit = s <= 67 && 67 < s + 10;
-        const g = S.g({ hidden: true });
-        const r = S.rect(X(s) + 1, y, 0, 24, { parent: g, tone: hit ? 'purple' : 'muted', rx: 5 });
-        const t = S.text((X(s) + X(s + 10)) / 2, y + 12, `[${fmt(s)}, ${fmt(s + 10)})`, { parent: g, size: 11, tone: hit ? 'purple' : 'muted', weight: 700, hidden: true });
-        S.text(12, y + 12, hit ? '✓ contains it' : '✗ misses it', { parent: g, anchor: 'start', size: 11, weight: 700, fill: hit ? C.ok : '#6f7c98' });
-        return { g, r, t, w: X(s + 10) - X(s) - 2, hit };
-      });
-      const grow = async (A, w) => { await A.show(w.g); await A.to(w.r, { width: w.w }, 550); await A.show(w.t); };
-      return [
-        { cap: 'One event with event time <b>10:07</b>. The windows are 10 minutes long, and a new one starts every 2 minutes.',
-          run: A => A.show(evTk, evLine) },
-        { cap: 'The windows starting at 9:58, 10:00, 10:02, 10:04 and 10:06 all cover 10:07, so Flink adds the event to <b>each</b> of them.',
-          run: A => A.stagger(rows.filter(r => r.hit), w => grow(A, w), 260) },
-        { cap: 'The window starting at 9:56 ends at 10:06 (excluded), and the one starting at 10:08 begins after the event. Neither gets it.',
-          run: A => A.stagger(rows.filter(r => !r.hit), w => grow(A, w), 260) },
-        { cap: 'Each event belongs to <b>size ÷ slide = 10 ÷ 2 = 5</b> windows, and each window fires its own result. That is 5× the work and state of a tumbling window, so keep the ratio small.',
-          run: async A => { rows.filter(r => r.hit).forEach(r => r.r.setAttribute('stroke', C.ok)); await A.blink(evTk, 1); } }
-      ];
-    }
-  });
-
-  /* L8: session windows merge */
-  D('session-merge', {
-    title: 'Session windows (gap 30 min): each event opens a window, overlapping ones merge', h: 305,
-    build(S) {
-      const X = m => 130 + m * 5.9, yA = 268;          /* m = minutes after 9:50 */
-      const fmt = m => { const t = 590 + m; return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
-      S.line(120, yA, 770, yA, { color: '#3a4766' });
-      for (let m = 10; m <= 110; m += 10) { S.line(X(m), yA - 4, X(m), yA + 4, { color: '#3a4766' }); S.text(X(m), yA + 16, fmt(m), { size: 10, fill: '#93a0bb' }); }
-      const rl = (y, t) => S.text(12, y, t, { anchor: 'start', size: 11.5, weight: 700, fill: '#93a0bb' });
-      rl(36, 'events (key u1)'); rl(118, 'own window'); S.text(12, 134, '[t, t + 30 min)', { anchor: 'start', size: 10.5, fill: '#6f7c98' }); rl(214, 'sessions');
-      const own = (m, row, tone) => {
-        const g = S.g({ hidden: true }), c = tone === 'warn' ? C.warn : '#56627e';
-        S.rect(X(m), 84 + row * 28, X(30) - X(0), 22, { parent: g, fill: 'none', stroke: c, dash: '4 3', rx: 5 });
-        S.text(X(m + 15), 95 + row * 28, `[${fmt(m)}, ${fmt(m + 30)})`, { parent: g, size: 10.5, fill: tone === 'warn' ? C.warn : '#93a0bb' });
-        const dot = S.token(X(m), 36, fmt(m), { tone: tone || 'info', hidden: true });
-        return { g, dot };
-      };
-      const sess = a => {
-        const g = S.g({ hidden: true });
-        const r = S.rect(X(a), 199, 0, 30, { parent: g, tone: 'ok', rx: 6 });
-        const t = S.text(X(a), 214, '', { parent: g, size: 11.5, tone: 'ok', weight: 700 });
-        return { g, r, t };
-      };
-      const span = async (A, s, a, b) => { await A.to(s.r, { x: X(a), width: X(b) - X(a) }, 650); s.t._x = (X(a) + X(b)) / 2; S.setText(s.t, `[${fmt(a)}, ${fmt(b)})`); };
-      const e1 = own(10, 0), e2 = own(20, 1), e3 = own(70, 0), e4 = own(45, 2, 'warn');
-      const s1 = sess(10), s2 = sess(70);
-      const fire = S.line(X(100), 190, X(100), yA, { color: C.purple, sw: 2.2, hidden: true });
-      const fireT = S.text(X(100) - 6, 248, 'fires when watermark ≥ 11:30', { anchor: 'end', size: 11.5, tone: 'purple', weight: 700, hidden: true });
-      const add = async (A, e) => { await A.show(e.dot); await A.show(e.g); };
-      return [
-        { cap: 'Session windows have no fixed start or size. Each event of a key opens its own small window <b>[t, t + gap)</b>. With a 30 min gap, the 10:00 event opens [10:00, 10:30), which becomes a session.',
-          run: async A => { await add(A, e1); await A.show(s1.g); await span(A, s1, 10, 40); } },
-        { cap: 'The 10:10 event opens [10:10, 10:40). It overlaps the session, so Flink <b>merges</b> them: the session now runs [10:00, 10:40).',
-          run: async A => { await add(A, e2); await span(A, s1, 10, 50); } },
-        { cap: 'The 11:00 event opens [11:00, 11:30). The first session ended at 10:40, so there is no overlap and a <b>second session</b> starts.',
-          run: async A => { await add(A, e3); await A.show(s2.g); await span(A, s2, 70, 100); } },
-        { cap: 'Now an out-of-order event from <b>10:35</b> arrives. Its window [10:35, 11:05) overlaps both sessions, so all of them merge into one: <b>[10:00, 11:30)</b>. Two sessions become one.',
-          run: async A => { await add(A, e4); await A.hide(s2.g); await span(A, s1, 10, 100); } },
-        { cap: 'A session ends at <b>last event + gap</b>. It fires when the watermark passes 11:30, meaning 30 minutes of event time with no activity for this key. Every key has its own sessions.',
-          run: A => A.show(fire, fireT) }
-      ];
-    }
-  });
-
-  /* L9: a checkpoint end to end */
+  /* L10: a checkpoint end to end */
   D('checkpoint-flow', {
     title: 'Checkpoint 7, from trigger to COMPLETED', h: 330,
     build(S) {
@@ -642,7 +361,7 @@
     }
   });
 
-  /* L9: aligned vs unaligned under backpressure */
+  /* L10: aligned vs unaligned under backpressure */
   D('aligned-vs-unaligned', {
     title: 'Under backpressure: aligned vs unaligned checkpoints', h: 312,
     build(S) {
@@ -679,7 +398,7 @@
     }
   });
 
-  /* L9: failure, restore, replay */
+  /* L10: failure, restore, replay */
   D('recovery-replay', {
     title: 'Crash, restore, replay: exactly-once state', h: 292,
     build(S) {
@@ -711,7 +430,7 @@
     }
   });
 
-  /* L9: savepoint + uid */
+  /* L10: savepoint + uid */
   D('savepoint-upgrade', {
     title: 'Upgrading with a savepoint: state is matched by uid', h: 262,
     build(S) {
