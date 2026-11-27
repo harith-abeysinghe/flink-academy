@@ -41,7 +41,7 @@ ${FA.D('watermark-timeline')}
 ${FA.C('', 'An everyday comparison', 'A teacher collects postal entries for a contest that closes on Friday. Letters can take up to 2 days in the post. When a letter postmarked Sunday arrives, the teacher reasons: "Anything postmarked Friday or earlier should be here by now", and announces the results. The postmark is event time, the 2 days is the bound, and "Friday or earlier is complete" is the watermark.')}
 <p>The facts to remember:</p>
 <table class="t"><tr><th>Fact</th><th>What it means in practice</th></tr>
-<tr><td>watermark = highest timestamp seen − bound − 1 ms</td><td>With a 2 s bound, after seeing 8 s the watermark is 5.999 s</td></tr>
+<tr><td>watermark = highest timestamp seen − bound − 1 <b>millisecond</b></td><td>With a 2 s bound, after seeing 8 s: 8 s − 2 s − 0.001 s = <b>5.999 s</b>. The 1 ms is tiny; it exists so that an event at exactly 6 s still counts as on time</td></tr>
 <tr><td>A window <code>[start, end)</code> fires when watermark ≥ end − 1 ms</td><td>[0,5) fires at watermark 4.999 s, i.e. once its last millisecond is covered</td></tr>
 <tr><td>It never moves backwards</td><td>An older event does not lower it</td></tr>
 <tr><td>Only <b>newer events</b> move it, not the clock</td><td>No data means a frozen watermark and no firing windows</td></tr>
@@ -68,7 +68,7 @@ ${FA.C('warn', 'Seconds vs milliseconds', 'If your assigner returns epoch <b>sec
 <p>Here are the moving parts together: events, a watermark that follows them, and two windows.</p>
 ${FA.D('watermark-flow')}
 <p>The same example as a table. Bound B = 2 s, windows of 5 s, and for simplicity a watermark after every event:</p>
-<table class="t"><tr><th>#</th><th>Event timestamp</th><th>Highest seen</th><th>Watermark (max − 2 s − 1 ms)</th><th>What happens</th></tr>
+<table class="t"><tr><th>#</th><th>Event timestamp</th><th>Highest seen</th><th>Watermark (max − 2 s − 0.001 s)</th><th>What happens</th></tr>
 <tr><td>1</td><td>1 s</td><td>1 s</td><td>−1.001 s</td><td>Goes into [0,5)</td></tr>
 <tr><td>2</td><td>3 s</td><td>3 s</td><td>0.999 s</td><td>Goes into [0,5)</td></tr>
 <tr><td>3</td><td>2 s</td><td>3 s</td><td>0.999 s</td><td>Out of order. The highest timestamp does not change, so neither does the watermark. Goes into [0,5)</td></tr>
