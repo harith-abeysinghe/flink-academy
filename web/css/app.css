@@ -75,6 +75,7 @@ table.t th{color:var(--muted);font-weight:600}
 /* Lesson */
 .lesson h2{margin-top:34px;padding-top:6px;border-top:1px solid var(--line)}
 .lesson h2:first-of-type{border-top:none;margin-top:10px}
+.lesson h4{margin:22px 0 6px;font-size:15px;color:var(--text,#e6ebf5)}
 .lesson-head{display:flex;justify-content:space-between;align-items:center;gap:10px}
 .toc{position:sticky;top:0;font-size:13px}
 .toc a{display:block;color:var(--muted);text-decoration:none;padding:3px 0}
