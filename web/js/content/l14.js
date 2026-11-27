@@ -1,87 +1,71 @@
 FA.registerLevel({
-  id: 14, track: 'Apache Beam on Flink', icon: '🛰️', minutes: 40,
-  title: 'Apache Beam on Flink',
-  summary: 'How the FlinkRunner translates Beam, how Beam steps show up in the Flink dashboard, key pipeline options, versions, state/timers and operational gotchas.',
-  objectives: ['Map Beam concepts to Flink concepts', 'Recognise Beam transforms in the Flink job graph', 'Configure FlinkPipelineOptions correctly', 'Debug and upgrade Beam jobs on Flink'],
+  id: 14, track: 'Operations', icon: '🚀', minutes: 25,
+  title: 'Deployment, scaling & upgrades',
+  summary: 'Session vs application clusters, Kubernetes Operator, HA, rescaling, autoscaling and safe upgrade procedures.',
+  objectives: ['Choose a deployment mode', 'Describe a FlinkDeployment on Kubernetes', 'Rescale and upgrade a stateful job safely', 'Know what HA protects against'],
   sections: [
-    { title: 'Concept mapping', html: `
-<table class="t"><tr><th>Beam</th><th>Flink</th><th>What you see in the UI</th></tr>
-<tr><td>Pipeline</td><td>Job</td><td>Job name from <code>--jobName</code></td></tr>
-<tr><td>PCollection</td><td>DataStream (stream of <i>WindowedValue</i>s)</td><td>Edges</td></tr>
-<tr><td>ParDo / MapElements / Filter</td><td>Operator (DoFnOperator)</td><td>Named after the transform, e.g. <code>ParDo(Parse)</code>, usually chained</td></tr>
-<tr><td>Fusion</td><td>Operator chaining</td><td>Several Beam steps inside one box</td></tr>
-<tr><td>GroupByKey / Combine.perKey / CoGroupByKey</td><td>keyBy + windowed state operator</td><td><b>HASH</b> edge into the GBK box</td></tr>
-<tr><td>Stateful DoFn (@StateId / @TimerId)</td><td>Keyed operator with keyed state + timers</td><td>HASH edge (input is keyed by the KV key)</td></tr>
-<tr><td>Reshuffle</td><td>keyBy on a random/explicit key + regroup</td><td>HASH edge (breaks fusion)</td></tr>
-<tr><td>Side input (View.asMap…)</td><td>Broadcast of the side input to all subtasks</td><td>BROADCAST edge into the consumer</td></tr>
-<tr><td>Flatten</td><td>union</td><td>Multiple input edges</td></tr>
-<tr><td>Windowing / triggers</td><td>Beam\'s own window logic inside Flink operators, driven by Flink watermarks</td><td>Watermarks tab</td></tr>
-<tr><td>--parallelism</td><td>Job parallelism (all operators)</td><td>Same "Parallelism: N" on every box</td></tr></table>
-${FA.D('beam-fusion')}
-${FA.W('jobgraph', { title: 'A typical Beam pipeline as Flink draws it', model: { cluster: { tms: 2, slotsPerTm: 4, coresPerTm: 4, sourceRate: 15000 }, ops: [{ kind: 'source', p: 4, name: 'KafkaIO.Read' }, { kind: 'map', p: 4, name: 'ParDo(ParseOrderFn)' }, { kind: 'map', p: 4, name: 'Window.Into(FixedWindows 1m)', cost: 1 }, { kind: 'keyby', name: 'WithKeys(customerId)' }, { kind: 'reduce', p: 4, name: 'Combine.perKey(SumFn) [GroupByKey]' }, { kind: 'map', p: 4, name: 'ParDo(FormatFn)' }, { kind: 'sink', p: 4, name: 'KafkaIO.Write' }] }, controls: [{ op: 0, key: 'p', label: '--parallelism (source)', max: 16 }, { op: 1, key: 'p', label: 'ParDo', max: 16 }, { op: 2, key: 'p', label: 'Window', max: 16 }, { op: 4, key: 'p', label: 'Combine', max: 16 }, { op: 5, key: 'p', label: 'Format', max: 16 }, { op: 6, key: 'p', label: 'Sink', max: 16 }, { op: 'cluster', key: 'chaining', type: 'check', label: '--operatorChaining' }] })}
-<p>Beam sets the same parallelism everywhere (set all fields to the same value to mimic it). Notice the single HASH edge where GroupByKey/Combine shuffles, and how the rest fuses into two boxes.</p>
-${FA.C('', 'Note', 'Real Beam-on-Flink graphs show longer, more technical names (e.g. <code>Combine.perKey(SumFn)/GroupByKey -&gt; …/ParDo(Anonymous)/ParMultiDo(Anonymous)</code>) and sometimes extra internal steps (Impulse, SDF read wrappers, PrepareWrite). The exact naming depends on Beam and IO versions. Use your step names in the Beam code to find yourself in the graph.')}` },
-    { title: 'Versions must match', html: `
-<p>The classic Java FlinkRunner artifact is built per Flink minor version: <code>beam-runners-flink-1.19</code>, <code>-1.20</code>, <code>-2.0</code> … and the <b>cluster's Flink minor version must match the runner artifact</b>. From the Beam docs table: Flink 1.19 needs Beam ≥ 2.61, Flink 1.20 needs Beam ≥ 2.70, Flink 2.0 needs Beam ≥ 2.72; 1.17/1.18 support ended at Beam 2.74.</p>
-<pre><code>&lt;dependency&gt;
-  &lt;groupId&gt;org.apache.beam&lt;/groupId&gt;
-  &lt;artifactId&gt;beam-runners-flink-1.19&lt;/artifactId&gt;
-  &lt;version&gt;\${beam.version}&lt;/version&gt;
-&lt;/dependency&gt;</code></pre>
-${FA.C('beam', 'Action item', 'Check your project\'s pom/gradle for the <code>beam-runners-flink-1.x</code> artifact and compare it to the Flink version in the dashboard header. They must agree on the minor version.')}` },
-    { title: 'The options that matter', html: `
-<pre><code>--runner=FlinkRunner
---flinkMaster=jobmanager:8081         # or [auto] when submitted with "flink run"
---parallelism=8
---maxParallelism=720                  # set once; keep stable for savepoints
---streaming=true
---checkpointingInterval=60000         # DEFAULT IS -1 → NO CHECKPOINTS!
---checkpointingMode=EXACTLY_ONCE
---stateBackend=rocksdb --stateBackendStoragePath=s3://…/ckpt
---externalizedCheckpointsEnabled=true
---tolerableCheckpointFailureNumber=3  # default 0 → one failed checkpoint fails the job
---unalignedCheckpointEnabled=false
---maxBundleSize=1000 --maxBundleTimeMills=1000
---objectReuse=false --fasterCopy=false
---operatorChaining=true               # false only while debugging</code></pre>
-<p>See the full list in the <a href="#/config">Config explorer</a>. Options appear in the Flink UI under the job's <b>Configuration</b> tab.</p>` },
-    { title: 'Bundles, latency and checkpoints', html: `
+    { title: 'Deployment modes', html: `
+<table class="t"><tr><th></th><th>Session</th><th>Application</th></tr>
+<tr><td>Cluster lifetime</td><td>Long-running, shared by many jobs</td><td>One cluster per application, torn down with it</td></tr>
+<tr><td>main() runs</td><td>On the client</td><td>On the JobManager</td></tr>
+<tr><td>Isolation</td><td>Weak (shared TMs; a crash affects all jobs)</td><td>Strong</td></tr>
+<tr><td>Good for</td><td>Dev, many small/short jobs, SQL gateway</td><td>Production streaming jobs (K8s standard)</td></tr></table>
+${FA.D('session-vs-app')}
+<p>Resource providers: Standalone (Docker/VMs), native Kubernetes, YARN. Standalone cannot add TaskManagers by itself.</p>` },
+    { title: 'Kubernetes Operator', html: `
+<pre><code>apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata: { name: orders-agg }
+spec:
+  image: registry/orders-agg:1.4.2
+  flinkVersion: v1_19
+  flinkConfiguration:
+    taskmanager.numberOfTaskSlots: "4"
+    state.backend.type: rocksdb
+    execution.checkpointing.interval: 60s
+    state.checkpoints.dir: s3://bucket/ckpt
+    state.savepoints.dir: s3://bucket/sp
+    high-availability.type: kubernetes
+    high-availability.storageDir: s3://bucket/ha
+  jobManager: { resource: { memory: "2048m", cpu: 1 } }
+  taskManager: { resource: { memory: "8192m", cpu: 4 } }
+  job:
+    jarURI: local:///opt/flink/usrlib/orders-agg.jar
+    parallelism: 8
+    upgradeMode: savepoint        # stateless | last-state | savepoint
+    state: running</code></pre>
 <ul>
-<li>Beam processes elements in <b>bundles</b>. On Flink streaming, a bundle closes after <code>maxBundleSize</code> elements or <code>maxBundleTimeMills</code> ms (defaults 1000 / 1000 ms). <code>@FinishBundle</code> runs then: a natural place to flush batched writes.</li>
-<li>Bundles are also finished on checkpoints so that output is consistent with the snapshot.</li>
-<li>Large bundle times increase latency; tiny bundles add per-bundle overhead.</li>
+<li>Change <code>image</code>/<code>parallelism</code> → the operator performs the upgrade according to <code>upgradeMode</code>: <b>savepoint</b> (stop with savepoint → redeploy → restore), <b>last-state</b> (uses the latest checkpoint via HA metadata; fast), <b>stateless</b> (start fresh).</li>
+<li>The operator can also trigger periodic savepoints and offers an <b>autoscaler</b> that adjusts per-vertex parallelism from busy time and backpressure metrics.</li>
+<li>Number of TM pods ≈ ceil(parallelism / slots per TM) for the default slot sharing group.</li>
 </ul>
-${FA.D('bundles')}` },
-    { title: 'State, timers and upgrades in Beam on Flink', html: `
-<ul>
-<li>Stateful DoFns (<code>@StateId</code> ValueState/BagState/MapState, <code>@TimerId</code> event/processing-time timers) are backed by Flink keyed state and timers, so the Flink state backend (HashMap/RocksDB) and checkpoints apply.</li>
-<li>Savepoint restore maps state by <b>operator identity derived from transform names</b>. Give every transform an explicit, stable name (<code>.apply("ParseOrders", …)</code>) and don't rename steps casually.</li>
-<li>Coder changes = state serializer changes. Changing a coder for a stateful step or GBK can break restore.</li>
-<li>Upgrade: <code>flink stop --savepointPath</code> → submit new jar with <code>--savepointPath=…</code> (Beam option) or <code>flink run -s …</code>.</li>
-</ul>` },
-    { title: 'Debugging checklist for Beam jobs', html: `
+${FA.D('k8s-upgrade')}` },
+    { title: 'High availability', html: `
+<p>Without HA, losing the JobManager means losing the job's coordination; it must be resubmitted (from a retained checkpoint or savepoint). With HA (<code>kubernetes</code> or <code>zookeeper</code>), a new JobManager takes over leadership, reads job metadata and the latest completed checkpoint pointer from <code>high-availability.storageDir</code>, and recovers the job automatically.</p>
+${FA.D('ha-failover')}` },
+    { title: 'Rescaling & safe upgrades', html: `
 <ol>
-<li>Job graph: which box is red, which are black? Read the Beam step names inside the boxes.</li>
-<li>If everything is one huge box, temporarily run with <code>--operatorChaining=false</code> in a test env to see per-step metrics.</li>
-<li>HASH edges = your GroupByKey/Combine/stateful steps. Check the SubTasks tab for <b>key skew</b> (hot customer/site/product).</li>
-<li>Watermarks tab: stuck? Check KafkaIO timestamp policy and idle partitions.</li>
-<li>Checkpoints: is checkpointing even enabled (<code>--checkpointingInterval</code>)? Long alignment means backpressure.</li>
-<li>Exceptions tab: Beam user-code exceptions surface here with the DoFn in the stack trace.</li>
-<li>Beam metrics (Counters/Distributions) are reported as Flink metrics/accumulators unless <code>--disableMetrics</code>.</li>
-</ol>` }
+<li>Confirm checkpoints are healthy and stateful operators have stable <code>uid</code>s (Beam: stable transform names).</li>
+<li><code>flink stop --savepointPath …</code> (or let the operator do it).</li>
+<li>Deploy the new version/parallelism with <code>-s &lt;savepoint&gt;</code>. Keyed state is redistributed by key groups (new p ≤ max parallelism).</li>
+<li>Watch: INITIALIZING time, first checkpoint success, lag catch-up, no restore errors.</li>
+<li>Keep the savepoint until the new version is proven.</li>
+</ol>
+${FA.D('keygroup-rescale', { title: 'Rescaling from a savepoint: whole key groups move' })}
+<p><b>Adaptive scheduler / reactive mode</b> (<code>jobmanager.scheduler: adaptive</code>): the job adapts its parallelism to the available slots, e.g. scaling with the number of TaskManagers.</p>
+${FA.C('warn', 'Compatibility', 'State schema changes need compatible serializers (POJO/Avro evolution rules). Changing key types, max parallelism or removing uids breaks restore. Beam: changing coders or step names can break restore too.')}` }
   ],
-  refs: [['Beam Flink runner (options & compatibility table)', 'https://beam.apache.org/documentation/runners/flink/'], ['Beam Flink runner roadmap', 'https://beam.apache.org/roadmap/flink-runner/'], ['Beam programming guide (state & timers, windowing)', 'https://beam.apache.org/documentation/programming-guide/'], ['Beam capability matrix', 'https://beam.apache.org/documentation/runners/capability-matrix/']],
+  refs: [['Deployment overview', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/overview/'], ['Flink Kubernetes Operator', 'https://nightlies.apache.org/flink/flink-kubernetes-operator-docs-stable/'], ['Elastic scaling', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/elastic_scaling/'], ['Savepoints', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/state/savepoints/']],
   quiz: [
-    { q: 'Which Beam transform creates a <b>HASH</b> edge in the Flink job graph?', options: ['ParDo', 'GroupByKey (and Combine.perKey)', 'MapElements', 'Filter'], answer: 1, explain: 'GBK is a shuffle by key, so Flink uses keyBy → HASH.' },
-    { q: 'Beam\'s "fusion" corresponds to which Flink concept?', options: ['Slot sharing', 'Operator chaining', 'Key groups', 'Watermarks'], answer: 1, explain: 'Fused steps run in one Flink task/thread.' },
-    { q: 'Default of <code>--checkpointingInterval</code>?', options: ['60000', '-1 (disabled)', '1000', '300000'], answer: 1, explain: 'Without setting it, a Beam streaming job on Flink takes no checkpoints.' },
-    { q: 'Your cluster runs Flink 1.19.x. Which runner artifact must the Beam job use?', options: ['beam-runners-flink-1.18', 'beam-runners-flink-1.19', 'beam-runners-flink-2.0', 'Any'], answer: 1, explain: 'Runner minor version must match the cluster.' },
-    { q: 'What happens with <code>--tolerableCheckpointFailureNumber</code> left at its default 0?', options: ['Failures are ignored', 'One failed checkpoint fails the job (triggering restart)', 'Checkpoints are disabled', 'Only savepoints fail'], answer: 1, explain: '0 tolerable failures means any checkpoint failure fails the job.' },
-    { q: 'In Beam on Flink, how do you set different parallelism for a slow DoFn only?', options: ['.setParallelism on the ParDo', 'Not directly: --parallelism is job-wide; batch I/O, tune bundles or split into separate jobs', 'Use slotSharingGroup', 'Use Reshuffle.withParallelism'], answer: 1, explain: 'The classic FlinkRunner applies one parallelism to all transforms.' },
-    { q: 'A side input (View.asMap) consumed by a ParDo usually shows up as…', options: ['FORWARD edge', 'BROADCAST of the side input to all consumer subtasks', 'GLOBAL edge', 'No edge'], answer: 1, explain: 'Side inputs must be available to every parallel instance.' },
-    { q: 'What closes a bundle on the Flink streaming runner by default? (select all)', type: 'multi', options: ['1000 elements (maxBundleSize)', '1000 ms (maxBundleTimeMills)', 'A checkpoint', 'Every GroupByKey'], answer: [0, 1, 2], explain: 'Size, time, and checkpoints finish bundles.' },
-    { q: 'Why give every Beam transform an explicit stable name?', options: ['Prettier UI only', 'State in savepoints is mapped via operator identity derived from names; renaming can break restore', 'Required for compilation', 'It sets parallelism'], answer: 1, explain: 'Stable names = stable state mapping across upgrades.' },
-    { q: 'Everything is fused into one huge box and you cannot tell which step is slow. Debug approach?', options: ['--operatorChaining=false in a test environment to see each step separately', 'Increase maxParallelism', 'Disable checkpoints', 'Use GLOBAL'], answer: 0, explain: 'Unchained tasks give per-step busy/backpressure metrics (with some overhead).' },
-    { q: 'Beam stateful DoFn state is stored in…', options: ['Beam\'s own database', 'Flink keyed state (HashMap or RocksDB backend), checkpointed by Flink', 'Kafka', 'Driver memory'], answer: 1, explain: 'The FlinkRunner maps Beam state & timers to Flink keyed state & timers.' }
+    { q: 'Best deployment mode for an isolated production streaming job on Kubernetes?', options: ['Session', 'Application', 'Local', 'Per-job on K8s'], answer: 1, explain: 'Application mode: one cluster per app.' },
+    { q: 'In application mode, main() runs on…', options: ['Client', 'JobManager', 'TaskManager', 'Kafka'], answer: 1, explain: 'That is the defining property of application mode.' },
+    { q: 'Operator <code>upgradeMode: last-state</code> uses…', options: ['A new savepoint', 'The latest checkpoint (via HA metadata)', 'No state', 'Kafka offsets only'], answer: 1, explain: 'Fast upgrades from the last checkpoint.' },
+    { q: 'Parallelism 12 and 4 slots per TaskManager in one slot sharing group. How many TMs are needed?', type: 'number', answer: 3, explain: 'ceil(12/4) = 3.' },
+    { q: 'What does JobManager HA provide?', options: ['Faster checkpoints', 'Automatic JobManager failover with recovery from the latest checkpoint', 'More slots', 'Exactly-once sinks'], answer: 1, explain: 'Leader election + persisted job metadata.' },
+    { q: 'Safe rescale of a stateful job from p=4 to p=8 (max p 128)?', options: ['Change -p and restart without state', 'Stop with savepoint, then run with -p 8 -s <savepoint>', 'Edit the checkpoint files', 'Impossible'], answer: 1, explain: 'Key groups are redistributed on restore.' },
+    { q: 'What prevents restore after an upgrade? (select all)', type: 'multi', options: ['Changing max parallelism', 'Removing/changing operator uids without --allowNonRestoredState', 'Incompatible state serializer changes', 'Changing the job name'], answer: [0, 1, 2], explain: 'Job name does not matter for state.' },
+    { q: 'Which scheduler adapts parallelism to available slots (used by reactive mode)?', options: ['default', 'adaptive', 'region', 'fifo'], answer: 1, explain: 'jobmanager.scheduler: adaptive.' },
+    { q: 'Standalone cluster, job needs more slots. What must happen?', options: ['ResourceManager starts new TMs automatically', 'You start more TaskManagers (or add slots) yourself', 'Flink lowers parallelism silently', 'Nothing, it queues forever successfully'], answer: 1, explain: 'Standalone RM cannot provision TMs.' },
+    { q: 'The Flink Kubernetes Operator autoscaler decides mainly from…', options: ['Kafka partition count only', 'Per-vertex busy time / backpressure / throughput metrics', 'CPU temperature', 'Number of uids'], answer: 1, explain: 'It uses job metrics to compute target parallelism per vertex.' }
   ]
 });

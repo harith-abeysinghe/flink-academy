@@ -43,7 +43,7 @@ ${FA.C('tip', 'Try it', 'In the <a href="#/lab/cpu">"Slots are not CPUs" challen
 <ul>
 <li><b>Kafka sources</b>: source parallelism above the number of partitions leaves idle source subtasks (they also need idleness handling for watermarks). Usually partitions ≥ source parallelism.</li>
 <li><b>Bottleneck first</b>: raise the parallelism of the slow (red) task, not everything.</li>
-<li><b>Key skew</b>: parallelism cannot split a single hot key (Level 11).</li>
+<li><b>Key skew</b>: parallelism cannot split a single hot key (Level 12).</li>
 <li><b>Headroom</b>: size for peak load plus catch-up after a restart (lag replay).</li>
 </ul>` }
   ],

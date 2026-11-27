@@ -1,10 +1,10 @@
-/* Animated diagrams for lessons 10-14 (Web UI, backpressure, memory, deployment, Beam) */
+/* Animated diagrams for lessons 11-15 (Web UI, backpressure, memory, deployment, Beam) */
 (function (FA) {
   'use strict';
   const D = FA.registerDiagram;
   const C = FA.DG.SOLID;
 
-  /* L10: anatomy of one job-graph box */
+  /* L11: anatomy of one job-graph box */
   D('box-anatomy', {
     title: 'Reading one box in the job graph', h: 300,
     build(S) {
@@ -40,7 +40,7 @@
     }
   });
 
-  /* L11: backpressure propagates upstream */
+  /* L12: backpressure propagates upstream */
   D('backpressure-propagation', {
     title: 'How backpressure travels upstream', h: 292,
     build(S) {
@@ -73,7 +73,7 @@
     }
   });
 
-  /* L11: hot key */
+  /* L12: hot key */
   D('hot-key', {
     title: 'A hot key: why more parallelism does not help', h: 290,
     build(S) {
@@ -105,7 +105,7 @@
     }
   });
 
-  /* L12: TaskManager memory model */
+  /* L13: TaskManager memory model */
   D('memory-tree', {
     title: 'TaskManager memory, built up from the container limit', h: 300,
     build(S) {
@@ -135,7 +135,7 @@
     }
   });
 
-  /* L13: session vs application mode */
+  /* L14: session vs application mode */
   D('session-vs-app', {
     title: 'Session mode vs application mode', h: 300,
     build(S) {
@@ -169,7 +169,7 @@
     }
   });
 
-  /* L13: Kubernetes operator savepoint upgrade */
+  /* L14: Kubernetes operator savepoint upgrade */
   D('k8s-upgrade', {
     title: 'A savepoint upgrade done by the Flink Kubernetes Operator', h: 270,
     build(S) {
@@ -191,7 +191,7 @@
     }
   });
 
-  /* L13: JobManager high availability */
+  /* L14: JobManager high availability */
   D('ha-failover', {
     title: 'JobManager failover with high availability', h: 272,
     build(S) {
@@ -214,7 +214,7 @@
     }
   });
 
-  /* L14: Beam steps fuse into Flink tasks */
+  /* L15: Beam steps fuse into Flink tasks */
   D('beam-fusion', {
     title: 'Beam steps → Flink boxes (fusion = chaining)', h: 318,
     build(S) {
@@ -243,7 +243,7 @@
     }
   });
 
-  /* L14: Beam bundles on Flink */
+  /* L15: Beam bundles on Flink */
   D('bundles', {
     title: 'Bundles: when @FinishBundle runs', h: 270,
     build(S) {

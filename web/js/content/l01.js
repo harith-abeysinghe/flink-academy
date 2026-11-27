@@ -30,12 +30,12 @@ ${FA.C('tip', 'Rule of thumb', 'If a business user would complain that "orders f
     { title: 'Where Apache Beam fits', html: `
 <p><b>Apache Beam</b> is a <i>programming model + SDKs</i> (Java, Python, Go). You write a pipeline once (PCollections, ParDo, GroupByKey, windows, triggers) and run it on a <b>runner</b>: Google Cloud Dataflow, <b>Apache Flink</b>, Spark, or the local DirectRunner.</p>
 <p>With <code>--runner=FlinkRunner</code>, Beam <b>translates</b> your pipeline into a native Flink job. That job runs on the Flink cluster, so everything in this course applies to your Beam jobs: the Flink dashboard, slots, parallelism, backpressure, checkpoints and savepoints.</p>
-${FA.C('beam', 'For your Beam jobs', 'When a Beam job is slow or stuck, you debug it in the <b>Flink</b> UI. Beam transform names (e.g. <code>ParDo(EnrichFn)</code>) appear inside the Flink task boxes. Level 14 covers this mapping in detail.')}
+${FA.C('beam', 'For your Beam jobs', 'When a Beam job is slow or stuck, you debug it in the <b>Flink</b> UI. Beam transform names (e.g. <code>ParDo(EnrichFn)</code>) appear inside the Flink task boxes. Level 15 covers this mapping in detail.')}
 ${FA.D('beam-to-flink')}` },
     { title: 'Flink in one picture', html: `
 <p>A Flink program is a <b>dataflow</b>: <i>sources → transformations → sinks</i>. When you submit it, Flink turns it into a graph of tasks that run in parallel across workers. Here is a tiny job, drawn the way the Flink dashboard draws it:</p>
 ${FA.W('jobgraph', { title: 'Your first job graph (try changing the source rate)', model: { cluster: { tms: 1, slotsPerTm: 2, coresPerTm: 4, sourceRate: 10000 }, ops: [{ kind: 'source', p: 2, name: 'Kafka orders' }, { kind: 'map', p: 2, name: 'Parse' }, { kind: 'keyby', name: 'keyBy(customer)' }, { kind: 'reduce', p: 2, name: 'Sum per customer' }, { kind: 'sink', p: 2, name: 'Kafka totals' }] }, controls: [{ op: 'cluster', key: 'sourceRate', label: 'Source rate (rec/s)', min: 1000, max: 2000000, step: 5000 }] })}
-<p>Do not worry about every detail yet. By Level 10 you will read every line in those boxes.</p>` }
+<p>Do not worry about every detail yet. By Level 11 you will read every line in those boxes.</p>` }
   ],
   refs: [['Flink: Timely stream processing (event time)', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/concepts/time/'], ['Flink concepts overview', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/concepts/overview/'], ['Beam Flink runner', 'https://beam.apache.org/documentation/runners/flink/'], ['The Dataflow Model paper', 'https://www.vldb.org/pvldb/vol8/p1792-Akidau.pdf']],
   quiz: [

@@ -1,55 +1,51 @@
 FA.registerLevel({
-  id: 11, track: 'Operations', icon: '🔥', minutes: 35,
-  title: 'Backpressure & performance tuning',
-  summary: 'Find the real bottleneck, fix it (parallelism, skew, async I/O, chaining, serialization), and avoid the classic traps.',
-  objectives: ['Locate the bottleneck from colours and metrics', 'Fix sink/IO bottlenecks, CPU limits and data skew', 'Understand why more parallelism does not fix a hot key', 'Apply a systematic tuning checklist'],
+  id: 11, track: 'Operations', icon: '🖥️', minutes: 35,
+  title: 'The Flink Web UI in depth',
+  summary: 'Every screen of the dashboard: overview, job graph boxes and arrows, vertex tabs, checkpoints, exceptions, TaskManagers and Job Manager.',
+  objectives: ['Read each line inside a job-graph box', 'Use SubTasks, BackPressure, Watermarks, Metrics and FlameGraph tabs', 'Read the Checkpoints tab', 'Know where to look for each kind of problem'],
   sections: [
-    { title: 'How backpressure propagates', html: `
-<p>A slow task cannot consume its input fast enough → its input buffers fill → its upstream senders run out of credits and block (backpressured) → their inputs fill → … → the <b>source</b> slows down, and Kafka consumer lag grows.</p>
-<p><b>The rule</b>: walk the graph from the source. The tasks that are <b>black</b> (backpressured) are victims. The first <b>red</b> (busy) task after them is the likely <b>bottleneck</b>. Tasks after the bottleneck are mostly blue (idle, starving).</p>
-${FA.D('backpressure-propagation')}
-${FA.W('jobgraph', { title: 'Raise the sink parallelism or lower its cost until nothing is black', model: { cluster: { tms: 2, slotsPerTm: 8, coresPerTm: 8, sourceRate: 40000 }, ops: [{ kind: 'source', p: 4, name: 'Kafka payments' }, { kind: 'map', p: 4, name: 'Validate' }, { kind: 'keyby', name: 'keyBy(account)' }, { kind: 'reduce', p: 4, name: 'Running balance' }, { kind: 'sink', p: 2, name: 'JDBC upsert', cost: 150 }] }, controls: [{ op: 4, key: 'p', label: 'Sink parallelism', max: 16 }, { op: 4, key: 'cost', label: 'Sink µs/record', min: 1, max: 500 }, { op: 'cluster', key: 'sourceRate', label: 'Source rate', min: 1000, max: 200000, step: 5000 }] })}
-<p>Capacity check: 1 subtask spending 150 µs/record handles about 6,600 rec/s. At 40,000 rec/s you need at least 7 sink subtasks (plus headroom).</p>` },
-    { title: 'Typical bottlenecks and fixes', html: `
-<table class="t"><tr><th>Bottleneck</th><th>Signals</th><th>Fixes</th></tr>
-<tr><td>Slow external I/O (DB, REST)</td><td>Sink/enrich task red, FlameGraph off-CPU waits</td><td>Batching, Async I/O (more in-flight requests), more parallelism, caching, idempotent bulk writes</td></tr>
-<tr><td>CPU-heavy logic</td><td>Red task, FlameGraph hot method</td><td>Optimize code, more parallelism, more cores per slot</td></tr>
-<tr><td>Serialization</td><td>Kryo in FlameGraph, many unchained edges</td><td>POJOs/Avro with proper TypeInformation, avoid generic types (<code>pipeline.generic-types: false</code> to detect), chain more</td></tr>
-<tr><td>Key skew</td><td>One subtask much busier in SubTasks tab</td><td>Two-phase/local pre-aggregation, key salting, better key choice</td></tr>
-<tr><td>State backend</td><td>RocksDB: high busy time, disk I/O, slow checkpoints</td><td>More managed memory, incremental checkpoints, local SSDs, reduce state size/TTL</td></tr>
-<tr><td>GC</td><td>Busy but low throughput, GC time high in TM metrics</td><td>Bigger heap, fewer objects, RocksDB instead of heap state</td></tr>
-<tr><td>CPU oversubscribed</td><td>Everything moderately busy, TM CPU at 100%</td><td>Fewer slots per TM / more cores / more TMs</td></tr></table>` },
-    { title: 'Why parallelism does not fix a hot key', html: `
-<p>All records with the same key go to the <b>same</b> subtask (HASH). If 70% of traffic is one customer, that subtask must handle 70% regardless of parallelism 4 or 400. Fixes:</p>
+    { title: 'Guided tour', html: `
+<p>This mock follows the real Flink 1.x dashboard layout (labels can differ slightly between versions). Click around: every dashed red element explains itself. Open <b>Running Jobs</b>, then try each tab.</p>
+${FA.W('dashboard', {})}` },
+    { title: 'Reading one box', html: `
+${FA.D('box-anatomy')}
 <ul>
-<li><b>Two-phase (local/global) aggregation</b>: pre-aggregate before the shuffle (e.g. per source subtask), then keyBy and merge partial results. Only possible for associative aggregations (sum, count, min/max).</li>
-<li><b>Salting</b>: key by <code>(customer, random 0..N)</code>, aggregate, then keyBy customer and merge.</li>
-<li>Rethink the key: is per-customer state really needed, or per (customer, region)?</li>
+<li><b>Colour</b>: blue = idle, red = busy, black = backpressured, with blends in between.</li>
+<li>"(max)" means the <b>worst subtask</b>. One hot subtask (skew) is enough to make the box look busy, so check the <b>SubTasks</b> tab.</li>
+<li><b>Records Received/Sent</b> in the table below the graph count only <b>network</b> traffic between tasks. A source shows 0 received and a sink 0 sent; chained hand-offs are invisible there.</li>
+</ul>` },
+    { title: 'Where to look for what', html: `
+<table class="t"><tr><th>Symptom</th><th>Look at</th></tr>
+<tr><td>Job keeps restarting</td><td>Exceptions tab (root cause, deepest "Caused by"), TaskManager logs</td></tr>
+<tr><td>Lag growing / slow</td><td>Job graph colours → BackPressure tab → FlameGraph of the red task</td></tr>
+<tr><td>Windows never fire</td><td>Watermarks tab ("No Watermark", stuck values) and idle partitions</td></tr>
+<tr><td>Checkpoints failing</td><td>Checkpoints → History (expand row: per-task sync/async/alignment), Summary</td></tr>
+<tr><td>One subtask much slower</td><td>SubTasks tab: records received per subtask → key skew</td></tr>
+<tr><td>OOM / container killed</td><td>Task Managers → Metrics (heap, managed, network), logs; Level 13 memory model</td></tr>
+<tr><td>"Is my config really applied?"</td><td>Job Manager → Configuration, Job → Configuration</td></tr>
+<tr><td>Long startup after restart</td><td>TimeLine (INITIALIZING = state restore)</td></tr></table>` },
+    { title: 'Useful metrics (Metrics tab / Prometheus)', html: `
+<ul>
+<li><code>numRecordsInPerSecond</code>, <code>numRecordsOutPerSecond</code>: throughput per task/operator.</li>
+<li><code>busyTimeMsPerSecond</code>, <code>backPressuredTimeMsPerSecond</code>, <code>idleTimeMsPerSecond</code>: they sum to about 1000 per subtask.</li>
+<li><code>currentInputWatermark</code> / <code>currentOutputWatermark</code>.</li>
+<li>Kafka source: <code>pendingRecords</code> / records-lag-max: consumer lag.</li>
+<li><code>lastCheckpointDuration</code>, <code>numberOfFailedCheckpoints</code> (job level).</li>
+<li>TM: <code>Status.JVM.Memory.Heap.Used</code>, <code>Status.Flink.Memory.Managed.Used</code>, GC time.</li>
 </ul>
-${FA.D('hot-key')}
-${FA.C('tip', 'Try it', 'The <a href="#/lab/hot">Hot key on Black Friday</a> challenge reproduces this.')}` },
-    { title: 'Tuning checklist', html: `
-<ol>
-<li>Is the job actually behind? Check consumer lag and the throughput trend, not just colours.</li>
-<li>Find the first red task after black ones. Open SubTasks: skew or uniform?</li>
-<li>FlameGraph the red task: CPU (on-CPU) or waiting (off-CPU)?</li>
-<li>Fix the cause (code, I/O pattern, key), then scale that task (enough slots and cores).</li>
-<li>Re-check checkpoint duration and alignment, which usually improve once backpressure is gone.</li>
-<li>Only then consider network tuning (buffer timeout, buffer debloating) or unaligned checkpoints.</li>
-</ol>
-${FA.C('beam', 'Beam specifics', 'In Beam all transforms share one parallelism, so you scale the whole job. To isolate a slow DoFn, batch external calls with <code>GroupIntoBatches</code> or @StartBundle/@FinishBundle, and tune <code>--maxBundleSize</code>/<code>--maxBundleTimeMills</code>. Breaking fusion with <code>Reshuffle</code> can also help.')}` }
+${FA.C('tip', 'REST API', 'Everything in the UI comes from the REST API on the same port (8081): e.g. <code>/jobs/overview</code>, <code>/jobs/&lt;id&gt;/vertices/&lt;vid&gt;/backpressure</code>, <code>/jobs/&lt;id&gt;/checkpoints</code>. That is useful for scripts and alerts.')}` }
   ],
-  refs: [['How to identify the source of backpressure', 'https://flink.apache.org/2021/07/07/how-to-identify-the-source-of-backpressure/'], ['Monitoring back pressure', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/monitoring/back_pressure/'], ['Network stack deep dive', 'https://flink.apache.org/2019/06/05/a-deep-dive-into-flinks-network-stack/'], ['Large state tuning', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/state/large_state_tuning/']],
+  refs: [['Monitoring back pressure', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/monitoring/back_pressure/'], ['Monitoring checkpointing', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/monitoring/checkpoint_monitoring/'], ['Flame graphs', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/debugging/flame_graphs/'], ['Metrics', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/metrics/'], ['Confluent Flink 101: Web UI exercise', 'https://developer.confluent.io/courses/apache-flink/web-ui-exercise']],
   quiz: [
-    { q: 'Graph: Source (black) → Map (black) → Window (red) → Sink (blue). Bottleneck?', options: ['Source', 'Map', 'Window', 'Sink'], answer: 2, explain: 'First red task after the black ones.' },
-    { q: 'Why is the Sink blue in that example?', options: ['It is the bottleneck', 'It is starving: it only gets what the slow window emits', 'Its checkpoint failed', 'It is chained'], answer: 1, explain: 'Downstream of the bottleneck tasks are idle.' },
-    { q: 'A sink takes 200 µs per record. Minimum subtasks to sustain 20,000 rec/s?', type: 'number', answer: 4, explain: '1 subtask = 5,000 rec/s; 20,000 / 5,000 = 4 (plus headroom in practice).' },
-    { q: '70% of records share one key. You raise window parallelism from 8 to 32. Result?', options: ['4× faster', 'Barely changes: the hot key still lands on one subtask', 'Job fails', 'Key is split automatically'], answer: 1, explain: 'HASH sends a key to exactly one subtask.' },
-    { q: 'Fixes for a hot key (select all):', type: 'multi', options: ['Local/two-phase pre-aggregation', 'Key salting then merge', 'global()', 'Choosing a finer-grained key if the logic allows'], answer: [0, 1, 3], explain: 'global() makes it worse.' },
-    { q: 'FlameGraph of a red sink shows most time in PreparedStatement.executeBatch / socket reads. Best direction?', options: ['Optimize CPU-heavy parsing', 'Treat it as I/O-bound: bigger batches, async/more in-flight requests, more parallelism', 'Disable checkpoints', 'Increase max parallelism'], answer: 1, explain: 'The time is spent waiting on the database.' },
-    { q: 'A task is red; its SubTasks show equal records but all busy ~100%. Likely?', options: ['Key skew', 'Uniform overload: needs more parallelism or cheaper code', 'Idle source', 'Broadcast'], answer: 1, explain: 'Uniform load means skew is not the issue.' },
-    { q: 'Seeing Kryo serialization dominating CPU suggests…', options: ['Use generic types more', 'Register proper TypeInformation/POJOs/Avro and chain more', 'Increase network buffers', 'Use GLOBAL'], answer: 1, explain: 'Kryo fallback is slow; give Flink proper types.' },
-    { q: 'After fixing the bottleneck, what usually also improves?', options: ['Aligned checkpoint duration', 'Max parallelism', 'Number of key groups', 'Kafka partitions'], answer: 0, explain: 'Barriers no longer wait behind full buffers.' },
-    { q: 'In Beam on Flink, a common way to batch external calls in a DoFn is…', options: ['GroupIntoBatches or @StartBundle/@FinishBundle buffering', 'Window.into(Global)', 'Flatten', 'setParallelism on the DoFn'], answer: 0, explain: 'Bundle-level or GroupIntoBatches batching reduces per-record I/O overhead.' }
+    { q: 'In the job graph, a fully backpressured task is coloured…', options: ['Red', 'Blue', 'Black', 'Green'], answer: 2, explain: 'Blue idle, red busy, black backpressured.' },
+    { q: 'What does "Busy (max): 95%" in a box mean?', options: ['Average busy time of all subtasks', 'The busiest subtask of that task was working 95% of the time', 'CPU of the TaskManager', '95% of records processed'], answer: 1, explain: '(max) is the worst subtask.' },
+    { q: 'Why does a source task show 0 for "Records Received"?', options: ['Bug', 'The table counts records received over network edges from other tasks; a source has none', 'The source is idle', 'Metrics are disabled'], answer: 1, explain: 'Only inter-task network traffic is counted there.' },
+    { q: 'Job keeps restarting. First place to look?', options: ['FlameGraph', 'Exceptions tab', 'Watermarks', 'Submit New Job'], answer: 1, explain: 'Exceptions tab shows the root cause and history.' },
+    { q: 'Windows never fire. Which vertex tab helps most?', options: ['Accumulators', 'Watermarks', 'TaskManagers', 'Detail'], answer: 1, explain: 'Look for "No Watermark" or stuck values (idle splits).' },
+    { q: 'One subtask of a window task receives 10× more records than the others. What is it?', options: ['Backpressure', 'Key skew', 'GC', 'Checkpoint alignment'], answer: 1, explain: 'Uneven per-subtask input under HASH = skewed keys.' },
+    { q: 'Which tab shows which method burns CPU in a busy task?', options: ['FlameGraph', 'TimeLine', 'Configuration', 'Checkpoints'], answer: 0, explain: 'Requires rest.flamegraph.enabled: true.' },
+    { q: 'Subtasks stay long in INITIALIZING after a restart. Likely reason?', options: ['Slot shortage', 'Large state being restored', 'Watermark idleness', 'Too many network buffers'], answer: 1, explain: 'INITIALIZING includes state restore.' },
+    { q: 'Where do you verify the effective value of taskmanager.numberOfTaskSlots?', options: ['Job Manager → Configuration', 'Exceptions', 'Watermarks', 'Completed Jobs'], answer: 0, explain: 'The Job Manager page shows effective cluster config.' },
+    { q: 'busyTimeMsPerSecond + backPressuredTimeMsPerSecond + idleTimeMsPerSecond ≈', type: 'number', answer: 1000, tolerance: 1, explain: 'They partition each second of a subtask\'s time.' }
   ]
 });

@@ -72,7 +72,7 @@ ${FA.D('state-backends')}
 <tr><td>Checkpoints</td><td>Full snapshots</td><td><b>Incremental</b> possible (only new SST files)</td></tr>
 <tr><td>Typical use</td><td>Small/medium state, low latency</td><td>Large state, long windows, big joins</td></tr></table>
 <p>Configure with <code>state.backend.type: hashmap|rocksdb</code>. The checkpoint <i>storage</i> (where snapshots go: S3/HDFS/GCS) is configured separately (<code>state.checkpoints.dir</code>). Beam: <code>--stateBackend=rocksdb</code>.</p>
-${FA.C('tip', 'Memory link', 'RocksDB uses the slot\'s share of <b>managed memory</b> (Level 12). With the HashMap backend in a streaming job, managed memory is mostly unused, so you can lower <code>taskmanager.memory.managed.fraction</code> and give the heap more room.')}` }
+${FA.C('tip', 'Memory link', 'RocksDB uses the slot\'s share of <b>managed memory</b> (Level 13). With the HashMap backend in a streaming job, managed memory is mostly unused, so you can lower <code>taskmanager.memory.managed.fraction</code> and give the heap more room.')}` }
   ],
   refs: [['Working with state', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/dev/datastream/fault-tolerance/state/'], ['Stateful stream processing (key groups)', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/concepts/stateful-stream-processing/'], ['State backends', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/state/state_backends/'], ['Parallel execution: max parallelism', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/dev/datastream/execution/parallel/'], ['Ten Flink gotchas (key group skew)', 'https://engineering.contentsquare.com/2021/ten-flink-gotchas/']],
   quiz: [

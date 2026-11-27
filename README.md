@@ -1,6 +1,6 @@
 # Flink Academy
 
-A local study tool for Apache Flink (and Apache Beam on Flink). It has 15 levels that unlock one by one, animated step-by-step diagrams in every lesson, quizzes, a Pipeline Lab that simulates a Flink cluster and draws the job graph like the real dashboard, lab challenges, a config explorer, a TaskManager memory calculator, a clickable Web UI tour and a references page.
+A local study tool for Apache Flink (and Apache Beam on Flink). It has 16 levels that unlock one by one, animated step-by-step diagrams in every lesson, quizzes, a Pipeline Lab that simulates a Flink cluster and draws the job graph like the real dashboard, lab challenges, a config explorer, a TaskManager memory calculator, a clickable Web UI tour and a references page.
 
 ## Start
 
@@ -27,7 +27,7 @@ models/progress.py      progress document
 services/               HTTP server, JSON persistence, browser launcher
 utils/env_loader.py     stdlib .env parser
 web/                    the single-page app (no build step, no internet needed)
-  js/content/l01..l15   lessons + quizzes
+  js/content/l01..l16   lessons + quizzes
   js/sim/               Flink job simulator (chaining, ship strategies, slots, backpressure)
   js/widgets/           interactive lesson widgets
   js/diagrams/          animated SVG lesson diagrams (play / step / replay)

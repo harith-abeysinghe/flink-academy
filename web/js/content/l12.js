@@ -1,68 +1,55 @@
 FA.registerLevel({
-  id: 12, track: 'Operations', icon: '⚙️', minutes: 30,
-  title: 'Configuration & the memory model',
-  summary: 'config.yaml vs flink-conf.yaml, config precedence, the TaskManager memory model, and the settings that matter most.',
-  objectives: ['Know where each setting is configured and what overrides what', 'Compute TaskManager memory components', 'Diagnose common memory errors', 'Know the top settings for production'],
+  id: 12, track: 'Operations', icon: '🔥', minutes: 35,
+  title: 'Backpressure & performance tuning',
+  summary: 'Find the real bottleneck, fix it (parallelism, skew, async I/O, chaining, serialization), and avoid the classic traps.',
+  objectives: ['Locate the bottleneck from colours and metrics', 'Fix sink/IO bottlenecks, CPU limits and data skew', 'Understand why more parallelism does not fix a hot key', 'Apply a systematic tuning checklist'],
   sections: [
-    { title: 'Where configuration lives', html: `
+    { title: 'How backpressure propagates', html: `
+<p>A slow task cannot consume its input fast enough → its input buffers fill → its upstream senders run out of credits and block (backpressured) → their inputs fill → … → the <b>source</b> slows down, and Kafka consumer lag grows.</p>
+<p><b>The rule</b>: walk the graph from the source. The tasks that are <b>black</b> (backpressured) are victims. The first <b>red</b> (busy) task after them is the likely <b>bottleneck</b>. Tasks after the bottleneck are mostly blue (idle, starving).</p>
+${FA.D('backpressure-propagation')}
+${FA.W('jobgraph', { title: 'Raise the sink parallelism or lower its cost until nothing is black', model: { cluster: { tms: 2, slotsPerTm: 8, coresPerTm: 8, sourceRate: 40000 }, ops: [{ kind: 'source', p: 4, name: 'Kafka payments' }, { kind: 'map', p: 4, name: 'Validate' }, { kind: 'keyby', name: 'keyBy(account)' }, { kind: 'reduce', p: 4, name: 'Running balance' }, { kind: 'sink', p: 2, name: 'JDBC upsert', cost: 150 }] }, controls: [{ op: 4, key: 'p', label: 'Sink parallelism', max: 16 }, { op: 4, key: 'cost', label: 'Sink µs/record', min: 1, max: 500 }, { op: 'cluster', key: 'sourceRate', label: 'Source rate', min: 1000, max: 200000, step: 5000 }] })}
+<p>Capacity check: 1 subtask spending 150 µs/record handles about 6,600 rec/s. At 40,000 rec/s you need at least 7 sink subtasks (plus headroom).</p>` },
+    { title: 'Typical bottlenecks and fixes', html: `
+<table class="t"><tr><th>Bottleneck</th><th>Signals</th><th>Fixes</th></tr>
+<tr><td>Slow external I/O (DB, REST)</td><td>Sink/enrich task red, FlameGraph off-CPU waits</td><td>Batching, Async I/O (more in-flight requests), more parallelism, caching, idempotent bulk writes</td></tr>
+<tr><td>CPU-heavy logic</td><td>Red task, FlameGraph hot method</td><td>Optimize code, more parallelism, more cores per slot</td></tr>
+<tr><td>Serialization</td><td>Kryo in FlameGraph, many unchained edges</td><td>POJOs/Avro with proper TypeInformation, avoid generic types (<code>pipeline.generic-types: false</code> to detect), chain more</td></tr>
+<tr><td>Key skew</td><td>One subtask much busier in SubTasks tab</td><td>Two-phase/local pre-aggregation, key salting, better key choice</td></tr>
+<tr><td>State backend</td><td>RocksDB: high busy time, disk I/O, slow checkpoints</td><td>More managed memory, incremental checkpoints, local SSDs, reduce state size/TTL</td></tr>
+<tr><td>GC</td><td>Busy but low throughput, GC time high in TM metrics</td><td>Bigger heap, fewer objects, RocksDB instead of heap state</td></tr>
+<tr><td>CPU oversubscribed</td><td>Everything moderately busy, TM CPU at 100%</td><td>Fewer slots per TM / more cores / more TMs</td></tr></table>` },
+    { title: 'Why parallelism does not fix a hot key', html: `
+<p>All records with the same key go to the <b>same</b> subtask (HASH). If 70% of traffic is one customer, that subtask must handle 70% regardless of parallelism 4 or 400. Fixes:</p>
 <ul>
-<li><b>conf/config.yaml</b>: the cluster configuration file since Flink 1.19 (standard YAML 1.2, nested or flat keys). The legacy <code>flink-conf.yaml</code> still worked in 1.19/1.20 (and took priority if present) but is <b>not supported in Flink 2.0+</b>.</li>
-<li><b>Docker</b>: the <code>FLINK_PROPERTIES</code> environment variable is appended to the config.</li>
-<li><b>Kubernetes Operator</b>: <code>spec.flinkConfiguration</code> in the FlinkDeployment.</li>
-<li><b>Per job</b>: <code>-D key=value</code> on <code>flink run</code>, or in code (<code>env.configure(...)</code>, <code>env.enableCheckpointing(...)</code>). Beam: pipeline options.</li>
+<li><b>Two-phase (local/global) aggregation</b>: pre-aggregate before the shuffle (e.g. per source subtask), then keyBy and merge partial results. Only possible for associative aggregations (sum, count, min/max).</li>
+<li><b>Salting</b>: key by <code>(customer, random 0..N)</code>, aggregate, then keyBy customer and merge.</li>
+<li>Rethink the key: is per-customer state really needed, or per (customer, region)?</li>
 </ul>
-<p>Cluster-level options (memory, slots, HA, ports) are read when the JobManager/TaskManager processes start, so changing them requires a <b>restart</b> of those processes. Job-level options (parallelism, checkpointing, restart strategy) can be set per job; code usually wins over cluster defaults.</p>
-${FA.C('tip', 'Explore all settings', 'The <a href="#/config">Config explorer</a> lists the important keys with defaults and tips, plus the Beam pipeline options.')}` },
-    { title: 'TaskManager memory model', html: `
-${FA.D('memory-tree')}
-<pre><code>Total Process Memory (taskmanager.memory.process.size)  ← container/pod limit
-├── JVM Metaspace (256m)
-├── JVM Overhead (10%, 192m..1g)        ← threads, code cache, native
-└── Total Flink Memory (taskmanager.memory.flink.size)
-    ├── JVM Heap  (-Xmx)
-    │   ├── Framework Heap (128m)
-    │   └── Task Heap (rest)             ← your objects, HashMap state
-    └── Off-heap
-        ├── Managed Memory (40%)         ← RocksDB, batch sort/join, Python
-        ├── Network Memory (10%, min 64m) ← buffers between tasks
-        ├── Framework Off-Heap (128m)
-        └── Task Off-Heap (0)            ← your direct/native memory</code></pre>
-${FA.W('memory', {})}
-<p>Check the default: process 1728m → overhead 192 → Flink memory 1280 → network 128, managed 512, task heap 384. That is exactly what a default Docker TaskManager logs at startup.</p>` },
-    { title: 'Memory errors and what they mean', html: `
-<table class="t"><tr><th>Error</th><th>Meaning</th><th>Typical fix</th></tr>
-<tr><td><code>OutOfMemoryError: Java heap space</code></td><td>Task heap too small (heap state, big windows, buffering)</td><td>More task heap; RocksDB; incremental aggregation; TTL</td></tr>
-<tr><td><code>OutOfMemoryError: Metaspace</code></td><td>Too many classes loaded (restarts, leaks)</td><td>Raise jvm-metaspace.size; fix classloader leaks</td></tr>
-<tr><td><code>OutOfMemoryError: Direct buffer memory</code></td><td>Direct memory exceeded (connectors, Netty, user code)</td><td>Raise task.off-heap.size</td></tr>
-<tr><td><code>Insufficient number of network buffers</code></td><td>Too many channels for network memory (high parallelism, all-to-all)</td><td>Raise network fraction/min/max</td></tr>
-<tr><td>Container OOMKilled (exit 137), heap looks fine</td><td>Native memory above the limit (RocksDB, glibc arenas)</td><td>Raise jvm-overhead, keep RocksDB in managed memory, check <code>MALLOC_ARENA_MAX</code></td></tr></table>` },
-    { title: 'Top production settings', html: `
-<pre><code>taskmanager.numberOfTaskSlots: 4              # ≈ cores
-parallelism.default: 4
-pipeline.max-parallelism: 720                 # set once (divisible by many p values)
-taskmanager.memory.process.size: 8g
-state.backend.type: rocksdb
-state.backend.incremental: true
-state.checkpoints.dir: s3://…/checkpoints
-execution.checkpointing.interval: 60s
-execution.checkpointing.min-pause: 10s
-execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
-restart-strategy.type: exponential-delay
-high-availability.type: kubernetes
-metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory</code></pre>
-<p>Flink 2.x renamed several checkpoint keys (e.g. <code>execution.checkpointing.dir</code>, <code>execution.checkpointing.incremental</code>). Always check the docs for <b>your</b> version.</p>` }
+${FA.D('hot-key')}
+${FA.C('tip', 'Try it', 'The <a href="#/lab/hot">Hot key on Black Friday</a> challenge reproduces this.')}` },
+    { title: 'Tuning checklist', html: `
+<ol>
+<li>Is the job actually behind? Check consumer lag and the throughput trend, not just colours.</li>
+<li>Find the first red task after black ones. Open SubTasks: skew or uniform?</li>
+<li>FlameGraph the red task: CPU (on-CPU) or waiting (off-CPU)?</li>
+<li>Fix the cause (code, I/O pattern, key), then scale that task (enough slots and cores).</li>
+<li>Re-check checkpoint duration and alignment, which usually improve once backpressure is gone.</li>
+<li>Only then consider network tuning (buffer timeout, buffer debloating) or unaligned checkpoints.</li>
+</ol>
+${FA.C('beam', 'Beam specifics', 'In Beam all transforms share one parallelism, so you scale the whole job. To isolate a slow DoFn, batch external calls with <code>GroupIntoBatches</code> or @StartBundle/@FinishBundle, and tune <code>--maxBundleSize</code>/<code>--maxBundleTimeMills</code>. Breaking fusion with <code>Reshuffle</code> can also help.')}` }
   ],
-  refs: [['Configuration', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/config/'], ['Set up Flink\'s process memory', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/memory/mem_setup/'], ['Set up TaskManager memory', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/memory/mem_setup_tm/'], ['FLIP-366 config.yaml', 'https://cwiki.apache.org/confluence/display/FLINK/FLIP-366:+Support+standard+YAML+for+FLINK+configuration'], ['FLIP-49 unified memory', 'https://cwiki.apache.org/confluence/display/FLINK/FLIP-49+Unified+Memory+Configuration+for+TaskExecutors']],
+  refs: [['How to identify the source of backpressure', 'https://flink.apache.org/2021/07/07/how-to-identify-the-source-of-backpressure/'], ['Monitoring back pressure', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/monitoring/back_pressure/'], ['Network stack deep dive', 'https://flink.apache.org/2019/06/05/a-deep-dive-into-flinks-network-stack/'], ['Large state tuning', 'https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/state/large_state_tuning/']],
   quiz: [
-    { q: 'Since which version is <code>config.yaml</code> the default config file, and in which major version is flink-conf.yaml no longer supported?', options: ['1.15 / 1.18', '1.19 / 2.0', '1.17 / 1.20', '2.0 / 3.0'], answer: 1, explain: 'FLIP-366: config.yaml default in 1.19; flink-conf.yaml unsupported in 2.0.' },
-    { q: 'Default <code>taskmanager.memory.managed.fraction</code>?', options: ['0.1', '0.25', '0.4', '0.7'], answer: 2, explain: '40% of total Flink memory.' },
-    { q: 'Which component holds RocksDB\'s block cache by default?', options: ['Task heap', 'Managed memory', 'Network memory', 'Metaspace'], answer: 1, explain: 'RocksDB is bounded by managed memory.' },
-    { q: 'Process size 1728m with defaults. Total Flink memory (MB)?', type: 'number', answer: 1280, tolerance: 1, explain: '1728 − 256 metaspace − 192 overhead = 1280.' },
-    { q: 'A TaskManager has process size 1728m with all other memory settings at their defaults (total Flink memory = 1280 MB). Network memory (MB)?', type: 'number', answer: 128, tolerance: 1, explain: '0.1 × 1280 = 128 (within 64m..1g).' },
-    { q: '"Insufficient number of network buffers" at deployment. Fix?', options: ['Increase managed fraction', 'Increase network memory (fraction/min/max)', 'Increase metaspace', 'Disable checkpointing'], answer: 1, explain: 'Each channel needs buffers; give more network memory.' },
-    { q: 'Container OOMKilled while heap usage looks healthy with RocksDB. Suspect…', options: ['Task heap', 'Native/off-heap memory (RocksDB, overhead) beyond limits', 'Metaspace only', 'Too few slots'], answer: 1, explain: 'Increase overhead; keep RocksDB within managed memory.' },
-    { q: 'You change taskmanager.numberOfTaskSlots in the config. What else is needed?', options: ['Nothing, it applies live', 'Restart the TaskManagers', 'Restart only the job', 'Clear checkpoints'], answer: 1, explain: 'Cluster-level options are read at process start.' },
-    { q: 'How do you pass Flink config to the official Docker image?', options: ['FLINK_PROPERTIES environment variable', 'Kafka headers', 'JAVA_OPTS only', 'It cannot be configured'], answer: 0, explain: 'FLINK_PROPERTIES is appended to the configuration.' },
-    { q: 'JVM -Xmx of a TaskManager equals…', options: ['Total process memory', 'Framework heap + task heap', 'Managed memory', 'Network + task off-heap'], answer: 1, explain: 'JVM heap = framework heap + task heap.' }
+    { q: 'Graph: Source (black) → Map (black) → Window (red) → Sink (blue). Bottleneck?', options: ['Source', 'Map', 'Window', 'Sink'], answer: 2, explain: 'First red task after the black ones.' },
+    { q: 'Why is the Sink blue in that example?', options: ['It is the bottleneck', 'It is starving: it only gets what the slow window emits', 'Its checkpoint failed', 'It is chained'], answer: 1, explain: 'Downstream of the bottleneck tasks are idle.' },
+    { q: 'A sink takes 200 µs per record. Minimum subtasks to sustain 20,000 rec/s?', type: 'number', answer: 4, explain: '1 subtask = 5,000 rec/s; 20,000 / 5,000 = 4 (plus headroom in practice).' },
+    { q: '70% of records share one key. You raise window parallelism from 8 to 32. Result?', options: ['4× faster', 'Barely changes: the hot key still lands on one subtask', 'Job fails', 'Key is split automatically'], answer: 1, explain: 'HASH sends a key to exactly one subtask.' },
+    { q: 'Fixes for a hot key (select all):', type: 'multi', options: ['Local/two-phase pre-aggregation', 'Key salting then merge', 'global()', 'Choosing a finer-grained key if the logic allows'], answer: [0, 1, 3], explain: 'global() makes it worse.' },
+    { q: 'FlameGraph of a red sink shows most time in PreparedStatement.executeBatch / socket reads. Best direction?', options: ['Optimize CPU-heavy parsing', 'Treat it as I/O-bound: bigger batches, async/more in-flight requests, more parallelism', 'Disable checkpoints', 'Increase max parallelism'], answer: 1, explain: 'The time is spent waiting on the database.' },
+    { q: 'A task is red; its SubTasks show equal records but all busy ~100%. Likely?', options: ['Key skew', 'Uniform overload: needs more parallelism or cheaper code', 'Idle source', 'Broadcast'], answer: 1, explain: 'Uniform load means skew is not the issue.' },
+    { q: 'Seeing Kryo serialization dominating CPU suggests…', options: ['Use generic types more', 'Register proper TypeInformation/POJOs/Avro and chain more', 'Increase network buffers', 'Use GLOBAL'], answer: 1, explain: 'Kryo fallback is slow; give Flink proper types.' },
+    { q: 'After fixing the bottleneck, what usually also improves?', options: ['Aligned checkpoint duration', 'Max parallelism', 'Number of key groups', 'Kafka partitions'], answer: 0, explain: 'Barriers no longer wait behind full buffers.' },
+    { q: 'In Beam on Flink, a common way to batch external calls in a DoFn is…', options: ['GroupIntoBatches or @StartBundle/@FinishBundle buffering', 'Window.into(Global)', 'Flatten', 'setParallelism on the DoFn'], answer: 0, explain: 'Bundle-level or GroupIntoBatches batching reduces per-record I/O overhead.' }
   ]
 });
